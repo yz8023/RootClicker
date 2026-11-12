@@ -101,7 +101,7 @@ fun ClickScreen(bottomPadding: Dp) {
     fun startClicking() {
         ClickerStore.normalizeTo(screen.x, screen.y)
         ClickerService.start(context)
-        ClickerRuntime.engine.startProfile(ClickerStore.data.value.profile, screen.x, screen.y)
+        ClickerRuntime.engine.startProfile({ ClickerStore.data.value.profile }, screen.x, screen.y)
         (context as? Activity)?.moveTaskToBack(true)
     }
 

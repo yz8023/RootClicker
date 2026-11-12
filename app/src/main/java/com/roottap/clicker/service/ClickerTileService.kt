@@ -38,7 +38,7 @@ class ClickerTileService : TileService() {
             }
             ClickerStore.normalizeTo(size.x, size.y)
             ClickerService.start(this)
-            engine.startProfile(ClickerStore.data.value.profile, size.x, size.y)
+            engine.startProfile({ ClickerStore.data.value.profile }, size.x, size.y)
         }
         syncTile()
     }

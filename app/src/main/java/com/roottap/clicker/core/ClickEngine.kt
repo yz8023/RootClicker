@@ -52,9 +52,21 @@ class ClickEngine(private val sinkProvider: suspend () -> TouchSink?) {
         _state.value = EngineState()
     }
 
-    fun startProfile(profile: ClickProfile, screenWidth: Int, screenHeight: Int) {
+    fun startProfile(profile: ClickProfile, screenWidth: Int, screenHeight: Int) =
+        startProfile({ profile }, screenWidth, screenHeight)
+
+    /**
+     * Runs click cycles, reading the profile again every cycle so template switches, undo and
+     * timing edits from the floating panel take effect without restarting.
+     */
+    fun startProfile(
+        profileProvider: () -> ClickProfile,
+        screenWidth: Int,
+        screenHeight: Int,
+    ) {
         if (isRunning) return
-        if (profile.points.isEmpty()) {
+        val initial = profileProvider()
+        if (initial.points.isEmpty()) {
             _state.update { it.copy(running = false, message = "还没有点位，请先添加") }
             return
         }
@@ -67,9 +79,14 @@ class ClickEngine(private val sinkProvider: suspend () -> TouchSink?) {
                     _state.update { it.copy(running = false, message = "无法获得注入通道，请检查 root 授权") }
                     return@launch
                 }
-                if (profile.startDelayMs > 0) delay(profile.startDelayMs.toLong())
+                if (initial.startDelayMs > 0) delay(initial.startDelayMs.toLong())
                 var cycle = 0L
                 while (isActive) {
+                    val profile = profileProvider()
+                    if (profile.points.isEmpty()) {
+                        _state.update { it.copy(running = false, message = "点位被清空了") }
+                        return@launch
+                    }
                     if (profile.condition == ConditionKind.COLOR) {
                         val ready = awaitColor(profile.color)
                         if (!ready) {

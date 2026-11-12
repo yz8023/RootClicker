@@ -134,7 +134,7 @@ class ClickerService : Service() {
         if (profile.baseWidth == 0 || profile.baseHeight == 0) {
             ClickerStore.normalizeTo(size.x, size.y)
         }
-        ClickerRuntime.engine.startProfile(ClickerStore.data.value.profile, size.x, size.y)
+        ClickerRuntime.engine.startProfile({ ClickerStore.data.value.profile }, size.x, size.y)
     }
 
     private fun stopClicking() {
