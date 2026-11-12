@@ -89,7 +89,7 @@ class OverlayController(
     }
 
     fun hide() {
-        finishPicking()
+        finishPicking(silent = true)
         closeBubble()
         closePanel()
         detachBar()
@@ -227,7 +227,8 @@ class OverlayController(
             return
         }
         if (panelState.open) return
-        if (panelState.picking) finishPicking()
+        if (panelState.picking) finishPicking(silent = true)
+        closeBubble()
         if (barHost == null) attachBar()
         val host = OverlayComposeHost(context)
         host.setContent {
@@ -331,7 +332,7 @@ class OverlayController(
     }
 
     /** Leaves picking and puts the bar back. Volume down and the 完成 button both land here. */
-    fun finishPicking() {
+    fun finishPicking(silent: Boolean = false) {
         if (!panelState.picking && pickerView == null) return
         pickerView?.let { runCatching { windowManager.removeView(it) } }
         pickerView = null
@@ -339,7 +340,7 @@ class OverlayController(
         panelState.picking = false
         panelState.colorMode = false
         refreshMarkers()
-        if (added > 0) toast("加了 $added 个点 · 点圆点能改它的时长和延迟")
+        if (!silent && added > 0) toast("加了 $added 个点 · 点圆点能改它的时长和延迟")
     }
 
     // ---------------------------------------------------------------- bubble
@@ -379,8 +380,8 @@ class OverlayController(
                 }
             }
         }
-        val width = min(dp(260), (screen.x * 0.78f).roundToInt())
-        val height = dp(230)
+        val width = min(dp(268), (screen.x * 0.82f).roundToInt())
+        val height = min(dp(330), (screen.y * 0.52f).roundToInt())
         val anchor = data.profile.points[index]
         var x = anchor.x + dp(26)
         var y = anchor.y - dp(30)

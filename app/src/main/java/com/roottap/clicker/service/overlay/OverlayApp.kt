@@ -179,13 +179,17 @@ fun PointBubbleContent(
     onDelete: () -> Unit,
     onClose: () -> Unit,
 ) {
-    Card(cornerRadius = 20.dp, contentPadding = PaddingValues(0.dp)) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxSize(), cornerRadius = 20.dp, contentPadding = PaddingValues(0.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState()),
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(text = "点位 $index (${point.x}, ${point.y})")
+                Text(text = "点位 $index")
                 Spacer(Modifier.weight(1f))
                 CompactButton(text = "完成", onClick = onClose, primary = true)
             }

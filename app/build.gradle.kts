@@ -14,8 +14,8 @@ android {
         applicationId = "com.roottap.clicker"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 4
-        versionName = "1.3.0"
+        versionCode = 5
+        versionName = "1.3.1"
     }
     signingConfigs {
         // A shared key so that sideloaded builds from GitHub always upgrade in place.
