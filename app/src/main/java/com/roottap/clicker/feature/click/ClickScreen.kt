@@ -217,8 +217,11 @@ fun ClickScreen(bottomPadding: Dp) {
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "间隔、按压、随机延迟、条件点击、模板切换都在悬浮窗里：" +
-                                "点悬浮条上的 ⚙ 展开，音量键也能开关面板。",
+                            text = "点「＋ 取点」后直接在屏幕上点，点完按「完成」；" +
+                                "之后点屏幕上的圆点就能改这个点的时长和延迟。",
+                        )
+                        Text(
+                            text = "悬浮条上：▶ 开始 / ＋ 取点 / ↶ 撤销 / ⚙ 设置；音量上键也能展开设置。",
                         )
                         if (serviceRunning) {
                             Text(text = "前台服务运行中，退出应用后仍会继续连点")

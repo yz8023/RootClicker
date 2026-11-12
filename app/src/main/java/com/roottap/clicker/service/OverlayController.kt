@@ -28,16 +28,19 @@ import com.roottap.clicker.service.overlay.ControlBarContent
 import com.roottap.clicker.service.overlay.OverlayComposeHost
 import com.roottap.clicker.service.overlay.OverlayPanelState
 import com.roottap.clicker.service.overlay.PanelContent
-import com.roottap.clicker.service.overlay.PickerControlsContent
+import com.roottap.clicker.service.overlay.PointBubbleContent
 import com.roottap.clicker.service.overlay.ZeroOverlayTheme
+import com.roottap.clicker.service.overlay.modeName
 import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * Floating windows: the control bar, the ZeroUI settings panel, the point markers and the
- * full screen point picker. The panels are real Compose views wrapped in the same ZeroUI theme
- * as the app, so the overlay and the app share one design system.
+ * Floating windows.
+ *
+ * The whole point of this controller is to stay out of the way: one small bar, points created by
+ * tapping the screen directly, and a point edited by tapping its own dot. Every panel is a real
+ * Compose view wrapped in the same ZeroUI theme as the app.
  */
 @SuppressLint("ClickableViewAccessibility")
 class OverlayController(
@@ -54,6 +57,7 @@ class OverlayController(
     private val windowManager = context.getSystemService(WindowManager::class.java)
     private val density = context.resources.displayMetrics.density
     private val screen = ClickerRuntime.screenSize(context)
+    private val main = Handler(Looper.getMainLooper())
 
     val panelState = OverlayPanelState()
 
@@ -61,15 +65,15 @@ class OverlayController(
     private var barParams: WindowManager.LayoutParams? = null
 
     private var panelHost: OverlayComposeHost? = null
-    private var panelParams: WindowManager.LayoutParams? = null
 
-    private var pickerScrim: View? = null
-    private var pickerHost: OverlayComposeHost? = null
+    /** Transparent full screen layer that turns a tap into a point while picking. */
+    private var pickerView: View? = null
+
+    private var bubbleHost: OverlayComposeHost? = null
+    private var pickingStartCount = 0
 
     private val markers = mutableListOf<View>()
     private var markerSignature: String? = null
-
-    private val main = Handler(Looper.getMainLooper())
 
     fun canDraw(): Boolean = Settings.canDrawOverlays(context)
 
@@ -85,27 +89,22 @@ class OverlayController(
     }
 
     fun hide() {
+        finishPicking()
+        closeBubble()
         closePanel()
         detachBar()
         clearMarkers()
-        closePicker()
     }
 
     fun onState(state: EngineState) {
-        // The bar reads the engine state through Compose; markers only follow a stop.
         if (!state.running) refreshMarkers()
     }
 
-    /**
-     * Called on every store change. The panels observe the store themselves, so only the markers
-     * need work here - and only when the points really moved, otherwise every slider step would
-     * rebuild the marker windows.
-     */
+    /** Called on every store change; markers follow the points, panels observe the store themselves. */
     fun onDataChanged() {
-        if (ClickerRuntime.engine.isRunning) return
         val data = ClickerStore.data.value
         val signature = buildString {
-            append(data.options.showMarkers).append(panelState.markersEditable)
+            append(data.options.showMarkers).append(panelState.picking)
             data.profile.points.forEach { append('|').append(it.id).append(',').append(it.x).append(',').append(it.y) }
             data.profile.points.forEach { if (!it.enabled) append('/').append(it.id) }
         }
@@ -114,27 +113,60 @@ class OverlayController(
         refreshMarkers()
     }
 
+    // ---------------------------------------------------------------- volume keys
+
+    /** Volume up: slide the panel in, slide it out again, or finish picking. */
+    fun onVolumeUp() {
+        if (panelState.picking) {
+            finishPicking()
+            return
+        }
+        if (panelState.open) closePanel() else openPanel()
+    }
+
+    /** Volume down: close the panel, or finish picking. */
+    fun onVolumeDown() {
+        if (panelState.picking) {
+            finishPicking()
+            return
+        }
+        if (panelState.open) closePanel() else closeBubble()
+    }
+
     // ---------------------------------------------------------------- bar
 
     private fun attachBar() {
-        if (barHost != null) return
+        if (barHost != null) {
+            barHost?.view?.visibility = View.VISIBLE
+            return
+        }
         val host = OverlayComposeHost(context)
         host.setContent {
             ZeroOverlayTheme {
                 val data by ClickerStore.data.collectAsState()
                 val state by ClickerRuntime.engine.state.collectAsState()
+                val undoCount by ClickerStore.undoCount.collectAsState()
                 CompositionLocalProvider(
                     // The overlay draws at the system density, ignoring the in-app UI scale.
                     LocalDensity provides Density(density, Density(density).fontScale),
                 ) {
                     ControlBarContent(
+                        picking = panelState.picking,
+                        colorMode = panelState.colorMode,
                         running = state.running,
                         clicks = state.clicks,
                         pointCount = data.profile.points.size,
                         modeName = modeName(data.profile.mode),
+                        undoCount = undoCount,
                         onToggle = { actions.onToggle() },
+                        onCreate = { startPicking() },
+                        onUndo = {
+                            toast(ClickerStore.undo() ?: "没有可撤销的操作")
+                            refreshMarkers()
+                        },
                         onPanel = { if (panelState.open) closePanel() else openPanel() },
-                        onClose = { actions.onCloseOverlay() },
+                        onToggleColor = { panelState.colorMode = !panelState.colorMode },
+                        onFinishPicking = { finishPicking() },
                         onDrag = { dx, dy -> moveBar(dx, dy) },
                     )
                 }
@@ -145,7 +177,6 @@ class OverlayController(
             height = WindowManager.LayoutParams.WRAP_CONTENT,
             x = dp(10),
             y = screen.y / 4,
-            touchable = true,
         )
         runCatching {
             windowManager.addView(host.view, params)
@@ -161,6 +192,16 @@ class OverlayController(
         }
         barHost = null
         barParams = null
+    }
+
+    /** Moves the bar to the top of the window stack, so it stays clickable over the picker layer. */
+    private fun raiseBar() {
+        val host = barHost ?: return
+        val params = barParams ?: return
+        runCatching {
+            windowManager.removeView(host.view)
+            windowManager.addView(host.view, params)
+        }
     }
 
     private fun moveBar(dx: Float, dy: Float) {
@@ -186,6 +227,7 @@ class OverlayController(
             return
         }
         if (panelState.open) return
+        if (panelState.picking) finishPicking()
         if (barHost == null) attachBar()
         val host = OverlayComposeHost(context)
         host.setContent {
@@ -196,11 +238,14 @@ class OverlayController(
                     PanelContent(
                         state = panelState,
                         onClose = { closePanel() },
-                        onPickPoints = { openPicker() },
+                        onCreate = { startPicking() },
                         onToast = { toast(it) },
                         onTestTap = { point -> testTap(point) },
                         onGrabColor = { grabColor() },
-                        onMarkersEditableChange = { editable -> setMarkersEditable(editable) },
+                        onHideOverlay = {
+                            closePanel()
+                            actions.onCloseOverlay()
+                        },
                     )
                 }
             }
@@ -208,18 +253,15 @@ class OverlayController(
         val width = min(dp(320), (screen.x * 0.92f).roundToInt())
         val params = overlayParams(
             width = width,
-            height = min((screen.y * 0.68f).roundToInt(), dp(720)),
+            height = min((screen.y * 0.74f).roundToInt(), dp(760)),
             x = (screen.x - width) / 2,
-            y = (screen.y * 0.14f).roundToInt(),
-            touchable = true,
+            y = (screen.y * 0.10f).roundToInt(),
         )
         runCatching {
             windowManager.addView(host.view, params)
             panelHost = host
-            panelParams = params
         }.onFailure { toast("设置面板打开失败：${it.message}") }
         panelState.open = true
-        panelState.detailPointId = null
     }
 
     fun closePanel() {
@@ -228,9 +270,138 @@ class OverlayController(
             host.destroy()
         }
         panelHost = null
-        panelParams = null
         panelState.open = false
-        panelState.detailPointId = null
+    }
+
+    // ---------------------------------------------------------------- picking
+
+    fun isPicking(): Boolean = panelState.picking
+
+    /**
+     * Creating a point is one tap on the bar and then taps on the real screen: no dimmed overlay,
+     * no second control bar. The floating bar steps aside while the user taps.
+     */
+    fun startPicking() {
+        if (!canDraw()) {
+            toast("请先授予悬浮窗权限")
+            return
+        }
+        if (panelState.picking) return
+        pickingStartCount = ClickerStore.data.value.profile.points.size
+        closePanel()
+        closeBubble()
+        if (barHost == null) attachBar()
+
+        val layer = View(context)
+        layer.setBackgroundColor(Color.TRANSPARENT)
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_FULLSCREEN,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        layer.setOnTouchListener { view, event ->
+            if (event.actionMasked == MotionEvent.ACTION_UP) {
+                val x = event.rawX.toInt().coerceIn(0, screen.x - 1)
+                val y = event.rawY.toInt().coerceIn(0, screen.y - 1)
+                if (panelState.colorMode) {
+                    sampleColorAt(x, y)
+                } else {
+                    ClickerStore.addPoint(ClickPoint(x = x, y = y))
+                    ClickerStore.normalizeTo(screen.x, screen.y)
+                }
+                view.performClick()
+            }
+            true
+        }
+        runCatching {
+            windowManager.addView(layer, params)
+            pickerView = layer
+        }.onFailure {
+            toast("取点失败：${it.message}")
+            return
+        }
+        panelState.picking = true
+        // The bar turns into "取点中 … 完成" and is lifted above the picker layer.
+        raiseBar()
+        refreshMarkers()
+    }
+
+    /** Leaves picking and puts the bar back. Volume down and the 完成 button both land here. */
+    fun finishPicking() {
+        if (!panelState.picking && pickerView == null) return
+        pickerView?.let { runCatching { windowManager.removeView(it) } }
+        pickerView = null
+        val added = ClickerStore.data.value.profile.points.size - pickingStartCount
+        panelState.picking = false
+        panelState.colorMode = false
+        refreshMarkers()
+        if (added > 0) toast("加了 $added 个点 · 点圆点能改它的时长和延迟")
+    }
+
+    // ---------------------------------------------------------------- bubble
+
+    /** Opens the per-point editor right next to the dot that was tapped. */
+    fun openBubble(pointId: Long) {
+        val data = ClickerStore.data.value
+        val index = data.profile.points.indexOfFirst { it.id == pointId }
+        if (index < 0) return
+        closeBubble()
+        val host = OverlayComposeHost(context)
+        host.setContent {
+            ZeroOverlayTheme {
+                val state by ClickerStore.data.collectAsState()
+                val point = state.profile.points.firstOrNull { it.id == pointId }
+                if (point != null) {
+                    CompositionLocalProvider(
+                        LocalDensity provides Density(density, Density(density).fontScale),
+                    ) {
+                        PointBubbleContent(
+                            index = index + 1,
+                            point = point,
+                            defaultPress = state.profile.pressMs,
+                            onPress = { value -> editPoint(pointId) { it.copy(pressMs = value) } },
+                            onDelay = { value -> editPoint(pointId) { it.copy(delayMs = value) } },
+                            onToggleEnabled = { enabled ->
+                                editPoint(pointId, recordUndo = true) { it.copy(enabled = enabled) }
+                            },
+                            onDelete = {
+                                ClickerStore.removePoint(pointId)
+                                closeBubble()
+                                toast("已删除，可撤销")
+                            },
+                            onClose = { closeBubble() },
+                        )
+                    }
+                }
+            }
+        }
+        val width = min(dp(260), (screen.x * 0.78f).roundToInt())
+        val height = dp(230)
+        val anchor = data.profile.points[index]
+        var x = anchor.x + dp(26)
+        var y = anchor.y - dp(30)
+        if (x + width > screen.x) x = anchor.x - width - dp(26)
+        x = x.coerceIn(0, (screen.x - width).coerceAtLeast(0))
+        y = y.coerceIn(dp(40), (screen.y - height - dp(24)).coerceAtLeast(dp(40)))
+        val params = overlayParams(width = width, height = height, x = x, y = y)
+        runCatching {
+            windowManager.addView(host.view, params)
+            bubbleHost = host
+        }.onFailure { toast("点位面板打开失败：${it.message}") }
+        panelState.bubblePointId = pointId
+    }
+
+    fun closeBubble() {
+        bubbleHost?.let { host ->
+            runCatching { windowManager.removeView(host.view) }
+            host.destroy()
+        }
+        bubbleHost = null
+        panelState.bubblePointId = null
     }
 
     // ---------------------------------------------------------------- markers
@@ -242,7 +413,6 @@ class OverlayController(
             return
         }
         if (markers.size == points.size && markers.isNotEmpty()) {
-            // Same points, new positions: move the existing views instead of rebuilding them.
             points.forEachIndexed { index, point ->
                 val view = markers[index]
                 val params = view.tag as? WindowManager.LayoutParams ?: return@forEachIndexed
@@ -262,20 +432,13 @@ class OverlayController(
                 height = dp(26),
                 x = point.x - dp(13),
                 y = point.y - dp(13),
-                touchable = panelState.markersEditable,
-            )
+            ).apply { flags = markerFlags() }
             marker.tag = params
             runCatching {
                 windowManager.addView(marker, params)
                 markers += marker
             }
         }
-    }
-
-    fun setMarkersEditable(editable: Boolean) {
-        panelState.markersEditable = editable
-        refreshMarkers()
-        toast(if (editable) "拖动圆点调整位置，松手即保存" else "点位已锁定")
     }
 
     private fun clearMarkers() {
@@ -287,12 +450,15 @@ class OverlayController(
     private fun markerFlags(): Int {
         var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-        if (!panelState.markersEditable) flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        // While picking, taps belong to the picker; markers must not swallow them.
+        if (panelState.picking) flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         return flags
     }
 
+    /**
+     * A dot the user can act on: tap opens its editor, drag moves it. No edit mode to switch on.
+     */
     private fun buildMarker(index: Int, point: ClickPoint): View {
-        val editable = panelState.markersEditable
         val marker = TextView(context).apply {
             text = index.toString()
             setTextColor(Color.WHITE)
@@ -304,148 +470,63 @@ class OverlayController(
             )
             if (!point.enabled) alpha = 0.45f
         }
-        if (editable) {
-            var startX = 0
-            var startY = 0
-            var startRawX = 0f
-            var startRawY = 0f
-            marker.setOnTouchListener { view, event ->
-                val params = view.tag as? WindowManager.LayoutParams
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        startX = params?.x ?: 0
-                        startY = params?.y ?: 0
-                        startRawX = event.rawX
-                        startRawY = event.rawY
+        var startX = 0
+        var startY = 0
+        var startRawX = 0f
+        var startRawY = 0f
+        var dragging = false
+        marker.setOnTouchListener { view, event ->
+            val params = view.tag as? WindowManager.LayoutParams
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    startX = params?.x ?: 0
+                    startY = params?.y ?: 0
+                    startRawX = event.rawX
+                    startRawY = event.rawY
+                    dragging = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - startRawX
+                    val dy = event.rawY - startRawY
+                    if (!dragging && abs(dx) + abs(dy) > dp(6)) dragging = true
+                    if (dragging && params != null) {
+                        params.x = startX + dx.toInt()
+                        params.y = startY + dy.toInt()
+                        runCatching { windowManager.updateViewLayout(view, params) }
                     }
-                    MotionEvent.ACTION_MOVE -> {
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (dragging) {
                         if (params != null) {
-                            params.x = startX + (event.rawX - startRawX).toInt()
-                            params.y = startY + (event.rawY - startRawY).toInt()
-                            runCatching { windowManager.updateViewLayout(view, params) }
-                        }
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        if (params != null &&
-                            abs(event.rawX - startRawX) + abs(event.rawY - startRawY) > dp(4)
-                        ) {
                             actions.onPointMoved(
                                 point.copy(
-                                    x = (params.x + dp(13)).coerceAtLeast(0),
-                                    y = (params.y + dp(13)).coerceAtLeast(0),
+                                    x = (params.x + dp(13)).coerceIn(0, screen.x - 1),
+                                    y = (params.y + dp(13)).coerceIn(0, screen.y - 1),
                                 ),
                             )
                         }
+                    } else {
+                        if (panelState.bubblePointId == point.id) closeBubble() else openBubble(point.id)
+                        view.performClick()
                     }
                 }
-                true
             }
+            true
         }
         return marker
     }
 
-    // ---------------------------------------------------------------- picker
-
-    fun openPicker() {
-        if (!canDraw()) {
-            toast("请先授予悬浮窗权限")
-            return
-        }
-        if (pickerScrim != null) {
-            closePicker()
-            return
-        }
-        val scrim = View(context)
-        scrim.setBackgroundColor(Color.parseColor("#1F000000"))
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            overlayType(),
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.TOP or Gravity.START }
-        scrim.setOnTouchListener { view, event ->
-            if (event.actionMasked == MotionEvent.ACTION_UP) {
-                val x = event.rawX.toInt().coerceIn(0, screen.x - 1)
-                val y = event.rawY.toInt().coerceIn(0, screen.y - 1)
-                if (y > dp(90)) {
-                    if (panelState.colorMode) {
-                        sampleColorAt(x, y)
-                    } else {
-                        ClickerStore.addPoint(ClickPoint(x = x, y = y))
-                        ClickerStore.normalizeTo(screen.x, screen.y)
-                        refreshMarkers()
-                    }
-                }
-                view.performClick()
-            }
-            true
-        }
-        runCatching {
-            windowManager.addView(scrim, params)
-            pickerScrim = scrim
-            attachPickerControls()
-            refreshMarkers()
-        }.onFailure { toast("取点窗口打开失败：${it.message}") }
-    }
-
-    fun isPickerOpen(): Boolean = pickerScrim != null
-
-    fun closePicker() {
-        pickerScrim?.let { runCatching { windowManager.removeView(it) } }
-        pickerScrim = null
-        pickerHost?.let { host ->
-            runCatching { windowManager.removeView(host.view) }
-            host.destroy()
-        }
-        pickerHost = null
-        panelState.colorMode = false
-        refreshMarkers()
-    }
-
-    private fun attachPickerControls() {
-        val host = OverlayComposeHost(context)
-        host.setContent {
-            ZeroOverlayTheme {
-                val data by ClickerStore.data.collectAsState()
-                CompositionLocalProvider(
-                    LocalDensity provides Density(density, Density(density).fontScale),
-                ) {
-                    PickerControlsContent(
-                        count = data.profile.points.size,
-                        colorMode = panelState.colorMode,
-                        onToggleColor = { panelState.colorMode = !panelState.colorMode },
-                        onUndo = {
-                            toast(ClickerStore.undo() ?: "没有可撤销的操作")
-                            refreshMarkers()
-                        },
-                        onDone = { closePicker() },
-                    )
-                }
-            }
-        }
-        val params = overlayParams(
-            width = WindowManager.LayoutParams.WRAP_CONTENT,
-            height = WindowManager.LayoutParams.WRAP_CONTENT,
-            x = 0,
-            y = dp(34),
-            touchable = true,
-        ).apply { gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL }
-        runCatching {
-            windowManager.addView(host.view, params)
-            pickerHost = host
-        }.onFailure { toast("取点控制条打开失败：${it.message}") }
-    }
-
     // ---------------------------------------------------------------- actions
+
+    private fun editPoint(id: Long, recordUndo: Boolean = false, transform: (ClickPoint) -> ClickPoint) {
+        val current = ClickerStore.data.value.profile.points.firstOrNull { it.id == id } ?: return
+        ClickerStore.updatePoint(transform(current), recordUndo = recordUndo)
+    }
 
     private fun testTap(point: ClickPoint) {
         val press = point.pressMs.takeIf { it > 0 } ?: ClickerStore.data.value.profile.pressMs
         toast("2 秒后在 (${point.x}, ${point.y}) 点一下")
-        main.postDelayed({
-            ClickerRuntime.engine.testTap(point.x, point.y, press)
-        }, 2_000)
+        main.postDelayed({ ClickerRuntime.engine.testTap(point.x, point.y, press) }, 2_000)
     }
 
     private fun grabColor() {
@@ -490,22 +571,14 @@ class OverlayController(
 
     // ---------------------------------------------------------------- helpers
 
-    private fun modeName(mode: com.roottap.clicker.core.ClickMode): String = when (mode) {
-        com.roottap.clicker.core.ClickMode.SEQUENTIAL -> "依次"
-        com.roottap.clicker.core.ClickMode.SIMULTANEOUS -> "同时"
-        com.roottap.clicker.core.ClickMode.RANDOM -> "随机"
-    }
-
     private fun overlayParams(
         width: Int,
         height: Int,
         x: Int,
         y: Int,
-        touchable: Boolean,
     ): WindowManager.LayoutParams {
-        var flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+        val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-        if (!touchable) flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         return WindowManager.LayoutParams(width, height, overlayType(), flags, PixelFormat.TRANSLUCENT)
             .apply {
                 gravity = Gravity.TOP or Gravity.START

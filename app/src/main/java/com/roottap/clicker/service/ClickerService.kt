@@ -115,7 +115,7 @@ class ClickerService : Service() {
             ActionShowOverlay -> overlay?.show()
             ActionPick -> {
                 overlay?.show()
-                overlay?.openPicker()
+                overlay?.startPicking()
             }
             else -> if (ClickerStore.data.value.options.overlayEnabled) overlay?.show()
         }
@@ -150,12 +150,12 @@ class ClickerService : Service() {
                     }
                     restoreVolume {
                         if (overlay == null) overlay = buildOverlay()
-                        overlay?.openPanel()
+                        overlay?.onVolumeUp()
                     }
                 }
             },
             onVolumeDown = {
-                main.post { restoreVolume { overlay?.closePanel() } }
+                main.post { restoreVolume { overlay?.onVolumeDown() } }
             },
         )
         volumeWatcher = watcher
