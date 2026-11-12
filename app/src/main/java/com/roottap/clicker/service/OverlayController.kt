@@ -168,15 +168,23 @@ class OverlayController(
                         onToggleColor = { panelState.colorMode = !panelState.colorMode },
                         onFinishPicking = { finishPicking() },
                         onDrag = { dx, dy -> moveBar(dx, dy) },
+                        onDragEnd = {
+                            val params = barParams
+                            if (params != null) {
+                                ClickerStore.updateOptions { it.copy(barX = params.x, barY = params.y) }
+                            }
+                        },
                     )
                 }
             }
         }
+        val saved = ClickerStore.data.value.options
         val params = overlayParams(
             width = WindowManager.LayoutParams.WRAP_CONTENT,
             height = WindowManager.LayoutParams.WRAP_CONTENT,
-            x = dp(10),
-            y = screen.y / 4,
+            // The bar comes back exactly where the user left it.
+            x = if (saved.barX >= 0) saved.barX else dp(10),
+            y = if (saved.barY >= 0) saved.barY else screen.y / 4,
         )
         runCatching {
             windowManager.addView(host.view, params)

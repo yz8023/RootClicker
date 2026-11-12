@@ -44,7 +44,11 @@ import com.roottap.clicker.core.ClickPoint
 import com.roottap.clicker.core.ClickerRuntime
 import com.roottap.clicker.core.ClickerStore
 import com.roottap.clicker.core.RootStatus
+import com.roottap.clicker.core.Shortcuts
 import com.roottap.clicker.core.Templates
+import com.roottap.clicker.feature.setup.MissingPermissionsRow
+import com.roottap.clicker.feature.setup.readPermissions
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.roottap.clicker.feature.common.PointDialog
 import com.roottap.clicker.feature.common.formatMs
 import com.roottap.clicker.feature.common.TextInputDialog
@@ -72,12 +76,20 @@ fun ClickScreen(bottomPadding: Dp) {
     val profile = data.profile
     val screen = remember { ClickerRuntime.screenSize(context) }
 
+    var permissions by remember { mutableStateOf(readPermissions(context)) }
     var editPoint by remember { mutableStateOf<ClickPoint?>(null) }
     var saveTemplate by remember { mutableStateOf(false) }
+    var savePlan by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         if (rootStatus == RootStatus.UNKNOWN) ClickerRuntime.checkRoot()
+    }
+
+    // Returning from a system permission page re-reads everything.
+    LifecycleResumeEffect(Unit) {
+        permissions = readPermissions(context)
+        onPauseOrDispose { }
     }
 
     fun openPicker() {
@@ -110,6 +122,22 @@ fun ClickScreen(bottomPadding: Dp) {
 
     ZeroPageFrame(title = "连点器", bottomInset = bottomPadding) { padding ->
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = padding) {
+            if (!permissions.ready) {
+                item {
+                    ListCard(CardModifier) {
+                        MissingPermissionsRow(
+                            snapshot = permissions,
+                            onCheck = {
+                                scope.launch {
+                                    withContext(Dispatchers.IO) { ClickerRuntime.checkRoot() }
+                                    permissions = readPermissions(context)
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+
             item { SectionTitle("运行状态") }
             item {
                 ListCard(CardModifier) {
@@ -234,6 +262,85 @@ fun ClickScreen(bottomPadding: Dp) {
                 }
             }
 
+            item { SectionTitle("方案 (${data.plans.size})") }
+            item {
+                ListCard(CardModifier) {
+                    if (data.plans.isEmpty()) {
+                        ListRow(
+                            title = "还没有方案",
+                            summary = "方案 = 点位 + 全部参数。存一次，下次一点整套恢复",
+                        )
+                    }
+                    data.plans.forEach { plan ->
+                        val active = plan.id == data.activePlanId
+                        ListRow(
+                            title = plan.name,
+                            summary = buildString {
+                                append("${plan.pointCount} 点 · ${modeName(plan.profile.mode)}")
+                                append(" · 间隔 ${plan.profile.intervalMs} ms")
+                                if (plan.profile.randomDelayMs > 0) append(" · 随机 0~${plan.profile.randomDelayMs}")
+                            },
+                            onClick = {
+                                ClickerStore.applyPlan(plan)
+                                message = "已套用方案「${plan.name}」"
+                            },
+                            endActions = {
+                                if (active) Badge(text = "使用中", accent = true) else Text(text = "套用")
+                            },
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TextButton(
+                            text = "＋ 存为方案",
+                            onClick = { savePlan = true },
+                            modifier = Modifier.weight(1f),
+                            minHeight = 40.dp,
+                        )
+                        TextButton(
+                            text = "更新当前",
+                            enabled = data.activePlanId != 0L,
+                            onClick = {
+                                ClickerStore.updatePlanFromCurrent(data.activePlanId)
+                                message = "已用当前点位覆盖方案"
+                            },
+                            modifier = Modifier.weight(1f),
+                            minHeight = 40.dp,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TextButton(
+                            text = "桌面快捷方式",
+                            enabled = data.activePlanId != 0L,
+                            onClick = {
+                                val plan = data.plans.firstOrNull { it.id == data.activePlanId }
+                                if (plan != null) {
+                                    val ok = Shortcuts.pinPlan(context, plan)
+                                    message = if (ok) "已请求添加桌面快捷方式" else "桌面不支持固定快捷方式"
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            minHeight = 40.dp,
+                        )
+                        TextButton(
+                            text = "删除当前",
+                            enabled = data.activePlanId != 0L,
+                            onClick = {
+                                ClickerStore.deletePlan(data.activePlanId)
+                                message = "已删除方案（点位仍在屏幕上）"
+                            },
+                            modifier = Modifier.weight(1f),
+                            minHeight = 40.dp,
+                        )
+                    }
+                }
+            }
+
             item { SectionTitle("模板") }
             item {
                 ListCard(CardModifier) {
@@ -325,6 +432,20 @@ fun ClickScreen(bottomPadding: Dp) {
         )
     }
 
+    if (savePlan) {
+        TextInputDialog(
+            title = "保存方案",
+            initial = "方案 ${data.plans.size + 1}",
+            hint = "方案名称",
+            onDismiss = { savePlan = false },
+            onConfirm = { name ->
+                savePlan = false
+                ClickerStore.savePlan(name)
+                message = "已保存方案「$name」（点位 + 参数）"
+            },
+        )
+    }
+
     if (saveTemplate) {
         TextInputDialog(
             title = "保存模板",
@@ -338,6 +459,12 @@ fun ClickScreen(bottomPadding: Dp) {
             },
         )
     }
+}
+
+private fun modeName(mode: com.roottap.clicker.core.ClickMode): String = when (mode) {
+    com.roottap.clicker.core.ClickMode.SEQUENTIAL -> "依次"
+    com.roottap.clicker.core.ClickMode.SIMULTANEOUS -> "同时"
+    com.roottap.clicker.core.ClickMode.RANDOM -> "随机"
 }
 
 private fun describeTemplate(

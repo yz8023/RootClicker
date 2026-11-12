@@ -115,6 +115,7 @@ fun ControlBarContent(
     onToggleColor: () -> Unit,
     onFinishPicking: () -> Unit,
     onDrag: (Float, Float) -> Unit,
+    onDragEnd: () -> Unit,
 ) {
     Card(cornerRadius = 24.dp, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -123,10 +124,13 @@ fun ControlBarContent(
                 modifier = Modifier
                     .size(width = 20.dp, height = 30.dp)
                     .pointerInput(Unit) {
-                        detectDragGestures { change, drag ->
-                            change.consume()
-                            onDrag(drag.x, drag.y)
-                        }
+                        detectDragGestures(
+                            onDragEnd = { onDragEnd() },
+                            onDrag = { change, drag ->
+                                change.consume()
+                                onDrag(drag.x, drag.y)
+                            },
+                        )
                     },
                 contentAlignment = Alignment.Center,
             ) {

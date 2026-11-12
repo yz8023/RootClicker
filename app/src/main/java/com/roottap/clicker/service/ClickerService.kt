@@ -19,6 +19,7 @@ import com.roottap.clicker.core.ClickPoint
 import com.roottap.clicker.core.ClickerRuntime
 import com.roottap.clicker.core.ClickerStore
 import com.roottap.clicker.core.EngineState
+import com.roottap.clicker.core.RootShell
 import com.roottap.clicker.core.ScriptPlayer
 import com.roottap.clicker.core.VolumeKeys
 import android.os.Handler
@@ -30,6 +31,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -66,6 +71,7 @@ class ClickerService : Service() {
     private var overlay: OverlayController? = null
     private var volumeWatcher: VolumeKeys.Watcher? = null
     private var volumeKeysApplied: Boolean? = null
+    private var appWatchJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -78,6 +84,12 @@ class ClickerService : Service() {
             ClickerRuntime.engine.state.collect { state ->
                 overlay?.onState(state)
                 notify(buildNotification(state))
+                if (state.running && ClickerStore.data.value.options.stopOnAppSwitch) {
+                    startAppWatch()
+                } else {
+                    appWatchJob?.cancel()
+                    appWatchJob = null
+                }
             }
         }
         scope.launch {
@@ -166,6 +178,36 @@ class ClickerService : Service() {
                 if (ok) "音量键已接管：${watcher.devicePath}" else "音量键监听启动失败（需要 root 读取输入设备）",
             )
         }
+    }
+
+    /**
+     * Stops the loop when another app comes to the front: the clicks were aimed at one screen and
+     * keep hitting whatever takes its place otherwise.
+     */
+    private fun startAppWatch() {
+        if (appWatchJob?.isActive == true) return
+        appWatchJob = scope.launch(Dispatchers.IO) {
+            // Give the user a moment to switch to the target app after starting.
+            delay(3_000)
+            val target = foregroundPackage() ?: return@launch
+            while (isActive) {
+                delay(2_500)
+                val now = foregroundPackage() ?: continue
+                if (now == target || now == packageName) continue
+                withContext(Dispatchers.Main) {
+                    ClickerRuntime.engine.stop("切到了 $now，已自动停止")
+                }
+                break
+            }
+        }
+    }
+
+    private fun foregroundPackage(): String? {
+        val out = RootShell.exec(
+            "dumpsys window 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | head -2",
+            4_000,
+        )
+        return Regex("u[0-9]+ ([A-Za-z0-9_.]+)/").find(out)?.groupValues?.getOrNull(1)
     }
 
     private fun stopVolumeWatcher() {

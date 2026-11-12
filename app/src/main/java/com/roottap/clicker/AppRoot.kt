@@ -23,7 +23,7 @@ import com.roottap.clicker.feature.settings.HomeBackgroundPage
 import com.roottap.clicker.feature.settings.LicensesPage
 import com.roottap.clicker.feature.settings.NavTabsPage
 import com.roottap.clicker.feature.settings.ThemeSettingsPage
-import com.roottap.clicker.feature.welcome.WelcomeScreen
+import com.roottap.clicker.feature.setup.SetupScreen
 import com.roottap.clicker.navigation.AppRoute
 import top.yukonga.miuix.kmp.basic.SnackbarHost
 import top.yukonga.miuix.kmp.basic.SnackbarHostState
@@ -39,7 +39,7 @@ fun AppRoot(welcomeCompleted: Boolean, pageTransition: PageTransition) {
         transitionSpec = { ZeroMotion.crossFade() },
         label = "appRoot",
     ) { completed ->
-        if (completed) AppNavGraph(pageTransition) else WelcomeScreen()
+        if (completed) AppNavGraph(pageTransition) else SetupScreen(onDone = {})
     }
 }
 

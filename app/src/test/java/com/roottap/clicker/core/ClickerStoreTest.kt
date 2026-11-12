@@ -148,6 +148,62 @@ class ClickerStoreTest {
     }
 
     @Test
+    fun aPlanKeepsPointsAndParametersTogether() {
+        ClickerStore.addPoint(ClickPoint(x = 10, y = 20, delayMs = 300))
+        ClickerStore.addPoint(ClickPoint(x = 30, y = 40))
+        ClickerStore.updateProfile { it.copy(mode = ClickMode.SIMULTANEOUS, intervalMs = 250) }
+        val plan = ClickerStore.savePlan("游戏 A")
+
+        // Wipe everything, then come back through the plan.
+        ClickerStore.clearPoints()
+        ClickerStore.updateProfile { it.copy(mode = ClickMode.SEQUENTIAL, intervalMs = 999) }
+        assertTrue(ClickerStore.data.value.profile.points.isEmpty())
+
+        ClickerStore.applyPlan(plan)
+
+        val profile = ClickerStore.data.value.profile
+        assertEquals(2, profile.points.size)
+        assertEquals(300, profile.points.first().delayMs)
+        assertEquals(ClickMode.SIMULTANEOUS, profile.mode)
+        assertEquals(250, profile.intervalMs)
+        assertEquals(plan.id, ClickerStore.data.value.activePlanId)
+    }
+
+    @Test
+    fun updatingAPlanOverwritesItWithTheCurrentScreen() {
+        ClickerStore.addPoint(ClickPoint(x = 1, y = 1))
+        val plan = ClickerStore.savePlan("方案")
+        ClickerStore.addPoint(ClickPoint(x = 2, y = 2))
+
+        ClickerStore.updatePlanFromCurrent(plan.id)
+
+        val stored = ClickerStore.data.value.plans.single()
+        assertEquals(2, stored.pointCount)
+    }
+
+    @Test
+    fun deletingTheActivePlanResetsTheSelection() {
+        ClickerStore.addPoint(ClickPoint(x = 5, y = 5))
+        val plan = ClickerStore.savePlan("方案")
+        ClickerStore.deletePlan(plan.id)
+        assertTrue(ClickerStore.data.value.plans.isEmpty())
+        assertEquals(0L, ClickerStore.data.value.activePlanId)
+    }
+
+    @Test
+    fun plansAndTemplatesStaySeparate() {
+        ClickerStore.addPoint(ClickPoint(x = 7, y = 7))
+        val plan = ClickerStore.savePlan("方案")
+        ClickerStore.saveTemplate("参数模板")
+        assertEquals(1, ClickerStore.data.value.plans.size)
+        assertEquals(1, ClickerStore.data.value.templates.size)
+        // A template never carries the points, a plan always does.
+        assertEquals(0, ClickerStore.data.value.templates.single().parameters().points.size)
+        ClickerStore.applyPlan(plan)
+        assertEquals(1, ClickerStore.data.value.profile.points.size)
+    }
+
+    @Test
     fun bumpHelpersStayInsideTheirRanges() {
         ClickerStore.updateProfile { it.copy(randomDelayMs = 0, intervalMs = 5) }
         ClickerStore.bumpRandomDelay(-50)

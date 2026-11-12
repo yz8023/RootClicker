@@ -107,6 +107,11 @@ data class EngineOptions(
     val showMarkers: Boolean = true,
     /** Volume up / down slide the floating settings panel in and out. */
     val volumeKeysToggle: Boolean = true,
+    /** Stop the loop when another app comes to the front. */
+    val stopOnAppSwitch: Boolean = false,
+    /** Where the user parked the control bar; -1 means "pick a default spot". */
+    val barX: Int = -1,
+    val barY: Int = -1,
     val vibrateOnClick: Boolean = false,
     val overlayEnabled: Boolean = true,
     val scriptSpeed: Float = 1f,
@@ -125,6 +130,20 @@ data class ClickTemplate(
     fun parameters(): ClickProfile = profile.copy(points = emptyList(), baseWidth = 0, baseHeight = 0)
 }
 
+/**
+ * A saved setup: the points themselves plus every parameter. Templates only carry parameters,
+ * a plan is the whole thing, so switching plans switches what is clicked and how.
+ */
+@Serializable
+data class ClickPlan(
+    val id: Long = 0L,
+    val name: String = "",
+    val profile: ClickProfile = ClickProfile(),
+    val createdAt: Long = 0L,
+) {
+    val pointCount: Int get() = profile.points.size
+}
+
 /** Persisted state of the whole app. */
 @Serializable
 data class ClickerData(
@@ -132,8 +151,10 @@ data class ClickerData(
     val scripts: List<RecordedScript> = emptyList(),
     val templates: List<ClickTemplate> = emptyList(),
     val options: EngineOptions = EngineOptions(),
+    val plans: List<ClickPlan> = emptyList(),
     val activeScriptId: Long = 0L,
     val activeTemplateId: Long = 0L,
+    val activePlanId: Long = 0L,
 )
 
 /** JSON backed store for profiles and scripts. */
@@ -330,6 +351,47 @@ object ClickerStore {
             )
         }
         return template
+    }
+
+    /** Saves the current profile, points included, as a reusable plan. */
+    fun savePlan(name: String): ClickPlan {
+        val plan = ClickPlan(
+            id = System.currentTimeMillis(),
+            name = name,
+            profile = _data.value.profile,
+            createdAt = System.currentTimeMillis(),
+        )
+        update { current ->
+            current.copy(
+                plans = (current.plans + plan).takeLast(40),
+                activePlanId = plan.id,
+            )
+        }
+        return plan
+    }
+
+    /** Overwrites a saved plan with what is on screen right now. */
+    fun updatePlanFromCurrent(id: Long) = update { current ->
+        current.copy(
+            plans = current.plans.map { if (it.id == id) it.copy(profile = current.profile) else it },
+            activePlanId = id,
+        )
+    }
+
+    fun renamePlan(id: Long, name: String) = update { current ->
+        current.copy(plans = current.plans.map { if (it.id == id) it.copy(name = name) else it })
+    }
+
+    fun deletePlan(id: Long) = update { current ->
+        current.copy(
+            plans = current.plans.filterNot { it.id == id },
+            activePlanId = if (current.activePlanId == id) 0L else current.activePlanId,
+        )
+    }
+
+    /** Switches to a plan: points and parameters are both replaced. */
+    fun applyPlan(plan: ClickPlan) = update { current ->
+        current.copy(profile = plan.profile, activePlanId = plan.id)
     }
 
     fun deleteTemplate(id: Long) = update { current ->

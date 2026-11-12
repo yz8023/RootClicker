@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -40,6 +41,8 @@ import com.roottap.clicker.core.ClickerRuntime
 import com.roottap.clicker.core.ClickerStore
 import com.roottap.clicker.core.RootStatus
 import com.roottap.clicker.core.Templates
+import com.roottap.clicker.feature.setup.PermissionSection
+import com.roottap.clicker.feature.setup.readPermissions
 import com.roottap.clicker.feature.common.TextInputDialog
 import com.roottap.clicker.service.ClickerService
 import kotlinx.coroutines.Dispatchers
@@ -60,70 +63,46 @@ fun ClickerSettingsScreen(bottomPadding: Dp) {
     val data by ClickerStore.data.collectAsState()
     val serviceRunning by ClickerService.running.collectAsState()
 
+    val appController = LocalAppController.current
     var checking by remember { mutableStateOf(false) }
     var renamingTemplate by remember { mutableStateOf<com.roottap.clicker.core.ClickTemplate?>(null) }
     var savingTemplate by remember { mutableStateOf(false) }
     var selfTest by remember { mutableStateOf("点一下运行自检：root、注入 dex、注入通道、一次真实点击") }
-    var permissionTick by remember { mutableStateOf(0) }
+    var snapshot by remember { mutableStateOf(readPermissions(context)) }
 
-    val notificationLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { permissionTick++ }
-
-    val overlayGranted = remember(permissionTick) { Settings.canDrawOverlays(context) }
-    val notificationGranted = remember(permissionTick) {
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
+    // Every system permission page comes back here; re-read everything instead of asking the
+    // user to press a refresh button.
+    LifecycleResumeEffect(Unit) {
+        snapshot = readPermissions(context)
+        onPauseOrDispose { }
     }
 
     ZeroPageFrame(title = "设置", bottomInset = bottomPadding) { padding ->
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = padding) {
-            item { SectionTitle("权限") }
+            item {
+                PermissionSection(
+                    snapshot = snapshot,
+                    onRequestRoot = {
+                        if (!checking) {
+                            checking = true
+                            scope.launch {
+                                withContext(Dispatchers.IO) { ClickerRuntime.checkRoot() }
+                                checking = false
+                                snapshot = readPermissions(context)
+                            }
+                        }
+                    },
+                    onChecking = checking,
+                )
+            }
+
+            item { SectionTitle("引导") }
             item {
                 ListCard(CardModifier) {
-                    ListRow(
-                        title = "Root 权限",
-                        summary = when (rootStatus) {
-                            RootStatus.GRANTED -> "已授权，点击重新检测"
-                            RootStatus.DENIED -> "未授权，点击重新申请"
-                            RootStatus.UNKNOWN -> "点击检测"
-                        },
-                        onClick = {
-                            if (!checking) {
-                                checking = true
-                                scope.launch {
-                                    withContext(Dispatchers.IO) { ClickerRuntime.checkRoot() }
-                                    checking = false
-                                }
-                            }
-                        },
-                        endActions = { Text(text = if (rootStatus == RootStatus.GRANTED) "已授权" else "去授权") },
-                    )
-                    ListRow(
-                        title = "悬浮窗权限",
-                        summary = "用于显示悬浮控制条和取点准星",
-                        onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(
-                                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                        Uri.parse("package:${context.packageName}"),
-                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                )
-                            }
-                        },
-                        endActions = { Text(text = if (overlayGranted) "已授权" else "去授权") },
-                    )
-                    ListRow(
-                        title = "通知权限",
-                        summary = "前台服务需要通知才能稳定驻留",
-                        onClick = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                        },
-                        endActions = { Text(text = if (notificationGranted) "已授权" else "去授权") },
+                    ArrowPreference(
+                        title = "重新看一遍权限引导",
+                        summary = "root / 悬浮窗 / 通知 / 电池白名单 的说明和入口",
+                        onClick = { appController.replayWelcome() },
                     )
                 }
             }
@@ -254,6 +233,14 @@ fun ClickerSettingsScreen(bottomPadding: Dp) {
                         },
                         title = "音量键开关设置面板",
                         summary = "音量上 = 展开悬浮设置面板，音量下 = 收起（需要 root）",
+                    )
+                    SwitchPreference(
+                        checked = data.options.stopOnAppSwitch,
+                        onCheckedChange = { on ->
+                            ClickerStore.updateOptions { it.copy(stopOnAppSwitch = on) }
+                        },
+                        title = "切到别的应用就停",
+                        summary = "连点跑着的时候切走会自动停止，避免点到别的界面",
                     )
                     SwitchPreference(
                         checked = data.options.vibrateOnClick,
