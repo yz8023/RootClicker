@@ -61,6 +61,8 @@ data class ClickProfile(
     /** Random offset added to every coordinate, keeps anti bot checks calm. */
     val jitterPx: Int = 0,
     val randomOrder: Boolean = false,
+    /** 0..this many extra milliseconds are added to every wait, anti rhythm detection. */
+    val randomDelayMs: Int = 0,
     val condition: ConditionKind = ConditionKind.NONE,
     val color: ColorCondition = ColorCondition(),
     val baseWidth: Int = 0,
@@ -102,13 +104,26 @@ data class EngineOptions(
     val scriptRepeat: Int = 0,
 )
 
+/** A saved set of click parameters. Points are deliberately not part of a template. */
+@Serializable
+data class ClickTemplate(
+    val id: Long = 0L,
+    val name: String = "",
+    val profile: ClickProfile = ClickProfile(),
+) {
+    /** Template with the layout dependent parts stripped, so it can be applied anywhere. */
+    fun parameters(): ClickProfile = profile.copy(points = emptyList(), baseWidth = 0, baseHeight = 0)
+}
+
 /** Persisted state of the whole app. */
 @Serializable
 data class ClickerData(
     val profile: ClickProfile = ClickProfile(),
     val scripts: List<RecordedScript> = emptyList(),
+    val templates: List<ClickTemplate> = emptyList(),
     val options: EngineOptions = EngineOptions(),
     val activeScriptId: Long = 0L,
+    val activeTemplateId: Long = 0L,
 )
 
 /** JSON backed store for profiles and scripts. */
@@ -125,6 +140,55 @@ object ClickerStore {
 
     private val _data = MutableStateFlow(ClickerData())
     val data: StateFlow<ClickerData> = _data.asStateFlow()
+
+    /** One undoable change to the point list. Kept in memory only. */
+    private sealed interface Undo {
+        data class Added(val id: Long) : Undo
+        data class Removed(val point: ClickPoint, val index: Int) : Undo
+        data class Moved(val before: ClickPoint) : Undo
+        data class Cleared(val points: List<ClickPoint>) : Undo
+    }
+
+    private val undoStack = ArrayDeque<Undo>()
+
+    private val _undoCount = MutableStateFlow(0)
+
+    /** Number of undoable steps, the UI hides the undo button at zero. */
+    val undoCount: StateFlow<Int> = _undoCount.asStateFlow()
+
+    private fun push(undo: Undo) {
+        undoStack.addLast(undo)
+        while (undoStack.size > 50) undoStack.removeFirst()
+        _undoCount.value = undoStack.size
+    }
+
+    /** Reverts the last point change; returns a short description or null. */
+    fun undo(): String? {
+        val last = undoStack.removeLastOrNull() ?: return null
+        _undoCount.value = undoStack.size
+        return when (last) {
+            is Undo.Added -> {
+                updateProfile { it.copy(points = it.points.filterNot { p -> p.id == last.id }) }
+                "已撤销添加"
+            }
+            is Undo.Removed -> {
+                updateProfile { profile ->
+                    val restored = profile.points.toMutableList()
+                    restored.add(last.index.coerceIn(0, restored.size), last.point)
+                    profile.copy(points = restored)
+                }
+                "已恢复点位 (${last.point.x}, ${last.point.y})"
+            }
+            is Undo.Moved -> {
+                updatePoint(last.before)
+                "已撤销移动"
+            }
+            is Undo.Cleared -> {
+                updateProfile { it.copy(points = last.points) }
+                "已恢复 ${last.points.size} 个点位"
+            }
+        }
+    }
 
     fun init(context: Context) {
         if (file != null) return
@@ -145,8 +209,40 @@ object ClickerStore {
     fun updateProfile(transform: (ClickProfile) -> ClickProfile) =
         update { it.copy(profile = transform(it.profile)) }
 
+    /** Clamps a single number without touching the point list. */
+    fun bumpInterval(delta: Int) = updateProfile {
+        it.copy(intervalMs = (it.intervalMs + delta).coerceIn(1, 60_000))
+    }
+
+    fun bumpPress(delta: Int) = updateProfile {
+        it.copy(pressMs = (it.pressMs + delta).coerceIn(1, 60_000))
+    }
+
+    fun bumpRandomDelay(delta: Int) = updateProfile {
+        it.copy(randomDelayMs = (it.randomDelayMs + delta).coerceIn(0, 5_000))
+    }
+
+    fun bumpRepeat(delta: Int) = updateProfile {
+        it.copy(repeatCount = (it.repeatCount + delta).coerceIn(0, 1_000_000))
+    }
+
+    fun bumpStartDelay(delta: Int) = updateProfile {
+        it.copy(startDelayMs = (it.startDelayMs + delta).coerceIn(0, 60_000))
+    }
+
+    fun setMode(mode: ClickMode) = updateProfile { it.copy(mode = mode) }
+
+    fun setCondition(kind: ConditionKind) = updateProfile { it.copy(condition = kind) }
+
     fun updateOptions(transform: (EngineOptions) -> EngineOptions) =
         update { it.copy(options = transform(it.options)) }
+
+    /** Test hook: forgets everything and clears the undo history. */
+    internal fun resetForTest() {
+        undoStack.clear()
+        _undoCount.value = 0
+        _data.value = ClickerData()
+    }
 
     private fun scheduleSave() {
         saveJob?.cancel()
@@ -177,20 +273,78 @@ object ClickerStore {
 
     fun setActiveScript(id: Long) = update { it.copy(activeScriptId = id) }
 
-    fun addPoint(point: ClickPoint) = updateProfile { profile ->
-        val next = point.copy(id = (profile.points.maxOfOrNull { it.id } ?: 0L) + 1L)
-        profile.copy(points = profile.points + next)
+    fun addPoint(point: ClickPoint): ClickPoint {
+        val next = point.copy(id = (_data.value.profile.points.maxOfOrNull { it.id } ?: 0L) + 1L)
+        updateProfile { it.copy(points = it.points + next) }
+        push(Undo.Added(next.id))
+        return next
     }
 
-    fun removePoint(id: Long) = updateProfile { profile ->
-        profile.copy(points = profile.points.filterNot { it.id == id })
+    fun removePoint(id: Long) {
+        val current = _data.value.profile.points
+        val index = current.indexOfFirst { it.id == id }
+        if (index < 0) return
+        val removed = current[index]
+        updateProfile { it.copy(points = it.points.filterNot { p -> p.id == id }) }
+        push(Undo.Removed(removed, index))
     }
 
-    fun updatePoint(point: ClickPoint) = updateProfile { profile ->
-        profile.copy(points = profile.points.map { if (it.id == point.id) point else it })
+    fun updatePoint(point: ClickPoint, recordUndo: Boolean = true) {
+        val before = _data.value.profile.points.firstOrNull { it.id == point.id } ?: return
+        if (before == point) return
+        updateProfile { profile ->
+            profile.copy(points = profile.points.map { if (it.id == point.id) point else it })
+        }
+        if (recordUndo) push(Undo.Moved(before))
     }
 
-    fun clearPoints() = updateProfile { it.copy(points = emptyList()) }
+    fun clearPoints() {
+        val current = _data.value.profile.points
+        if (current.isEmpty()) return
+        updateProfile { it.copy(points = emptyList()) }
+        push(Undo.Cleared(current))
+    }
+
+    // ---- templates ----
+
+    fun saveTemplate(name: String): ClickTemplate {
+        val template = ClickTemplate(
+            id = System.currentTimeMillis(),
+            name = name,
+            profile = _data.value.profile,
+        )
+        update { current ->
+            current.copy(
+                templates = (current.templates + template).takeLast(24),
+                activeTemplateId = template.id,
+            )
+        }
+        return template
+    }
+
+    fun deleteTemplate(id: Long) = update { current ->
+        current.copy(
+            templates = current.templates.filterNot { it.id == id },
+            activeTemplateId = if (current.activeTemplateId == id) 0L else current.activeTemplateId,
+        )
+    }
+
+    /** Applies a template: parameters change, the points on screen stay where they are. */
+    fun applyTemplate(template: ClickTemplate) {
+        val parameters = template.parameters()
+        update { current ->
+            val points = current.profile.points
+            current.copy(
+                profile = parameters.copy(
+                    points = points,
+                    baseWidth = current.profile.baseWidth,
+                    baseHeight = current.profile.baseHeight,
+                    color = current.profile.color,
+                ),
+                activeTemplateId = template.id,
+            )
+        }
+    }
 
     fun normalizeTo(width: Int, height: Int) = updateProfile { profile ->
         if (profile.baseWidth == width && profile.baseHeight == height) {

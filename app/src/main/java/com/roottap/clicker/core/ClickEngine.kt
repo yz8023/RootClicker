@@ -85,7 +85,8 @@ class ClickEngine(private val sinkProvider: suspend () -> TouchSink?) {
                                 tapPoint(sink, profile, point, screenWidth, screenHeight)
                                 _state.update { it.copy(clicks = it.clicks + 1) }
                                 onClick?.invoke()
-                                if (profile.pointGapMs > 0) delay(profile.pointGapMs.toLong())
+                                val gap = wait(profile.pointGapMs, profile.randomDelayMs)
+                                if (gap > 0) delay(gap)
                             }
                         }
                         ClickMode.SIMULTANEOUS -> {
@@ -106,7 +107,8 @@ class ClickEngine(private val sinkProvider: suspend () -> TouchSink?) {
                         _state.update { it.copy(running = false, message = "已完成的循环次数") }
                         return@launch
                     }
-                    if (profile.intervalMs > 0) delay(profile.intervalMs.toLong())
+                    val waitTime = wait(profile.intervalMs, profile.randomDelayMs)
+                    if (waitTime > 0) delay(waitTime)
                 }
             } catch (t: Throwable) {
                 _state.update { it.copy(running = false, message = t.message ?: "运行失败") }
@@ -175,6 +177,20 @@ class ClickEngine(private val sinkProvider: suspend () -> TouchSink?) {
                     _state.update { it.copy(running = false, playingScript = false) }
                 }
             }
+        }
+    }
+
+    /** Base wait plus a random 0..[extra] milliseconds, so the rhythm is not perfectly regular. */
+    private fun wait(base: Int, extra: Int): Long {
+        val jitter = if (extra > 0) Random.nextInt(extra + 1) else 0
+        return (base + jitter).toLong().coerceAtLeast(0L)
+    }
+
+    /** Injects one tap without starting a loop; used by the overlay "test" button. */
+    fun testTap(x: Int, y: Int, pressMs: Int) {
+        scope.launch {
+            val sink = sinkProvider() ?: return@launch
+            sink.tap(x, y, pressMs.coerceIn(1, 60_000))
         }
     }
 

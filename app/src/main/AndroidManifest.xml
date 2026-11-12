@@ -41,6 +41,20 @@
                 android:value="root_touch_injection" />
         </service>
 
+        <service
+            android:name=".service.ClickerTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_stat_click"
+            android:label="连点器"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
+
         <activity-alias
             android:name=".MainActivityLauncher"
             android:exported="true"

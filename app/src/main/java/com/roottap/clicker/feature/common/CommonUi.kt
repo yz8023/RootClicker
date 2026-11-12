@@ -4,6 +4,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -75,46 +77,63 @@ fun NumberDialog(
     )
 }
 
-/** Dialog that edits a click point by hand. */
+/** Dialog that edits one click point: coordinates plus an optional press duration override. */
 @Composable
 fun PointDialog(
     title: String,
     initialX: Int,
     initialY: Int,
     onDismiss: () -> Unit,
-    onConfirm: (Int, Int) -> Unit,
+    initialPress: Int = 0,
+    showPress: Boolean = true,
+    onConfirm: (Int, Int, Int) -> Unit,
 ) {
     var x by remember { mutableStateOf(initialX.toString()) }
     var y by remember { mutableStateOf(initialY.toString()) }
+    var press by remember { mutableStateOf(initialPress.toString()) }
     val px = x.toIntOrNull()
     val py = y.toIntOrNull()
+    val pressValue = press.toIntOrNull() ?: 0
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { MaterialText(title) },
         text = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = x,
-                    onValueChange = { x = it.filter { c -> c.isDigit() }.take(5) },
-                    singleLine = true,
-                    label = { MaterialText("X") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedTextField(
-                    value = y,
-                    onValueChange = { y = it.filter { c -> c.isDigit() }.take(5) },
-                    singleLine = true,
-                    label = { MaterialText("Y") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f),
-                )
+            Column {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = x,
+                        onValueChange = { input -> x = input.filter { it.isDigit() }.take(5) },
+                        singleLine = true,
+                        label = { MaterialText("X") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = y,
+                        onValueChange = { input -> y = input.filter { it.isDigit() }.take(5) },
+                        singleLine = true,
+                        label = { MaterialText("Y") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (showPress) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = press,
+                        onValueChange = { input -> press = input.filter { it.isDigit() }.take(5) },
+                        singleLine = true,
+                        label = { MaterialText("单独按压时长 ms（0 = 用默认）") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         },
         confirmButton = {
             MaterialTextButton(
                 enabled = px != null && py != null,
-                onClick = { if (px != null && py != null) onConfirm(px, py) },
+                onClick = { if (px != null && py != null) onConfirm(px, py, pressValue) },
             ) { MaterialText("确定") }
         },
         dismissButton = {

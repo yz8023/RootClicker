@@ -27,7 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.zeroui.kit.components.ButtonVariant
+import com.zeroui.kit.components.ArrowPreference
 import com.zeroui.kit.components.ListCard
 import com.zeroui.kit.components.ListRow
 import com.zeroui.kit.components.SectionTitle
@@ -39,6 +39,8 @@ import com.roottap.clicker.BuildConfig
 import com.roottap.clicker.core.ClickerRuntime
 import com.roottap.clicker.core.ClickerStore
 import com.roottap.clicker.core.RootStatus
+import com.roottap.clicker.core.Templates
+import com.roottap.clicker.feature.common.TextInputDialog
 import com.roottap.clicker.service.ClickerService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -59,6 +61,8 @@ fun ClickerSettingsScreen(bottomPadding: Dp) {
     val serviceRunning by ClickerService.running.collectAsState()
 
     var checking by remember { mutableStateOf(false) }
+    var renamingTemplate by remember { mutableStateOf<com.roottap.clicker.core.ClickTemplate?>(null) }
+    var savingTemplate by remember { mutableStateOf(false) }
     var selfTest by remember { mutableStateOf("点一下运行自检：root、注入 dex、注入通道、一次真实点击") }
     var permissionTick by remember { mutableStateOf(0) }
 
@@ -120,6 +124,53 @@ fun ClickerSettingsScreen(bottomPadding: Dp) {
                             }
                         },
                         endActions = { Text(text = if (notificationGranted) "已授权" else "去授权") },
+                    )
+                }
+            }
+
+            item { SectionTitle("模板") }
+            item {
+                ListCard(CardModifier) {
+                    if (data.templates.isEmpty()) {
+                        ListRow(
+                            title = "还没有自定义模板",
+                            summary = "悬浮窗里点「＋ 存为模板」，或在这里保存当前参数",
+                        )
+                    }
+                    data.templates.forEach { template ->
+                        ListRow(
+                            title = template.name,
+                            summary = "间隔 ${template.profile.intervalMs}ms · 按压 ${template.profile.pressMs}ms" +
+                                if (template.profile.randomDelayMs > 0) {
+                                    " · 随机 0~${template.profile.randomDelayMs}ms"
+                                } else {
+                                    ""
+                                },
+                            onClick = { ClickerStore.applyTemplate(template) },
+                            endActions = {
+                                TextButton(text = "改名", onClick = { renamingTemplate = template })
+                                TextButton(text = "删除", onClick = { ClickerStore.deleteTemplate(template.id) })
+                            },
+                        )
+                    }
+                    ArrowPreference(
+                        title = "把当前参数存为模板",
+                        summary = "内置模板不可删除；自定义模板可以改名",
+                        onClick = { savingTemplate = true },
+                    )
+                }
+            }
+
+            item { SectionTitle("快捷设置") }
+            item {
+                ListCard(CardModifier) {
+                    ListRow(
+                        title = "通知栏磁贴",
+                        summary = "下拉通知栏 → 编辑磁贴 → 把「连点器」拖进快捷设置，一点即开始 / 停止",
+                    )
+                    ListRow(
+                        title = "悬浮窗面板",
+                        summary = "悬浮条上的 ⚙ 展开全部参数：模式、间隔、随机延迟、按压、循环、条件、模板、取点",
                     )
                 }
             }
@@ -248,21 +299,45 @@ fun ClickerSettingsScreen(bottomPadding: Dp) {
                                 "MotionEvent，绕开无障碍服务，因此没有每次授权弹窗，" +
                                 "也更适合高频连点和多指同点。请仅用于自己可控的场景。",
                         )
-                        Spacer(Modifier.height(8.dp))
-                        TextButton(
-                            text = "查看开源许可",
-                            variant = ButtonVariant.Secondary,
-                            onClick = {
-                                scope.launch {
-                                    withContext(Dispatchers.IO) { ClickerRuntime.checkRoot() }
-                                }
-                            },
-                        )
                     }
                 }
             }
 
             item { Spacer(Modifier.height(24.dp)) }
         }
+    }
+
+    renamingTemplate?.let { template ->
+        TextInputDialog(
+            title = "模板改名",
+            initial = template.name,
+            hint = "模板名称",
+            onDismiss = { renamingTemplate = null },
+            onConfirm = { name ->
+                ClickerStore.deleteTemplate(template.id)
+                ClickerStore.update { current ->
+                    current.copy(
+                        templates = current.templates + template.copy(
+                            id = System.currentTimeMillis(),
+                            name = name,
+                        ),
+                    )
+                }
+                renamingTemplate = null
+            },
+        )
+    }
+
+    if (savingTemplate) {
+        TextInputDialog(
+            title = "保存模板",
+            initial = "模板 ${data.templates.size + 1}",
+            hint = "模板名称",
+            onDismiss = { savingTemplate = false },
+            onConfirm = { name ->
+                ClickerStore.saveTemplate(name)
+                savingTemplate = false
+            },
+        )
     }
 }

@@ -69,13 +69,10 @@ class ClickerService : Service() {
         overlay = OverlayController(this, object : OverlayController.Actions {
             override fun onToggle() = toggleClicking()
 
-            override fun onOpenPicker() {
-                overlay?.openPicker()
-            }
-
             override fun onCloseOverlay() {
                 overlay?.hide()
                 ClickerStore.updateOptions { it.copy(overlayEnabled = false) }
+                toast("悬浮窗已关闭，可在应用内重新打开")
             }
 
             override fun onPointMoved(point: ClickPoint) {
@@ -87,6 +84,10 @@ class ClickerService : Service() {
                 overlay?.onState(state)
                 notify(buildNotification(state))
             }
+        }
+        scope.launch {
+            // Keeps the floating panel in sync with points, templates and timing changes.
+            ClickerStore.data.collect { overlay?.onDataChanged() }
         }
         if (ClickerStore.data.value.options.overlayEnabled) {
             overlay?.show()
