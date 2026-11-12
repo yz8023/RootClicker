@@ -59,6 +59,7 @@ fun ClickerSettingsScreen(bottomPadding: Dp) {
     val serviceRunning by ClickerService.running.collectAsState()
 
     var checking by remember { mutableStateOf(false) }
+    var selfTest by remember { mutableStateOf("点一下运行自检：root、注入 dex、注入通道、一次真实点击") }
     var permissionTick by remember { mutableStateOf(0) }
 
     val notificationLauncher = rememberLauncherForActivityResult(
@@ -142,6 +143,34 @@ fun ClickerSettingsScreen(bottomPadding: Dp) {
                                     else ClickerService.start(context)
                                 },
                             )
+                        },
+                    )
+                    ListRow(
+                        title = "自检 / 测试点击",
+                        summary = selfTest,
+                        onClick = {
+                            scope.launch {
+                                selfTest = "检测中…"
+                                val size = ClickerRuntime.screenSize(context)
+                                val report = withContext(Dispatchers.IO) {
+                                    val builder = StringBuilder()
+                                    builder.append("root: ")
+                                    builder.append(if (com.roottap.clicker.core.RootShell.hasRoot()) "已授权" else "未授权")
+                                    builder.append(" · dex: ")
+                                    builder.append(
+                                        com.roottap.clicker.core.InjectorDex.prepare(context)
+                                            ?.substringAfterLast('/') ?: "未找到",
+                                    )
+                                    val sink = ClickerRuntime.ensureSink()
+                                    builder.append(" · 通道: ")
+                                    builder.append(sink?.description ?: "不可用")
+                                    val sent = sink?.tap(size.x / 2, size.y / 2, 60) ?: false
+                                    builder.append(" · 测试点击: ")
+                                    builder.append(if (sent) "已下发给 (${size.x / 2}, ${size.y / 2})" else "失败")
+                                    builder.toString()
+                                }
+                                selfTest = report
+                            }
                         },
                     )
                     ListRow(
