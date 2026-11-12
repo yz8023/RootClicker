@@ -21,13 +21,21 @@ enum class ClickMode { SEQUENTIAL, SIMULTANEOUS, RANDOM }
 @Serializable
 enum class ConditionKind { NONE, COLOR }
 
-/** One click position. [pressMs] 0 means "use the profile default". */
+/**
+ * One click position.
+ *
+ * @param pressMs press duration; 0 means "use the profile default".
+ * @param delayMs extra wait before this point inside a cycle, so each point can have its own pace.
+ * @param enabled false keeps the point on screen but the engine skips it.
+ */
 @Serializable
 data class ClickPoint(
     val id: Long = 0L,
     val x: Int = 0,
     val y: Int = 0,
     val pressMs: Int = 0,
+    val delayMs: Int = 0,
+    val enabled: Boolean = true,
 ) {
     val label: String get() = "($x, $y)"
 }
@@ -97,6 +105,8 @@ data class RecordedScript(
 @Serializable
 data class EngineOptions(
     val showMarkers: Boolean = true,
+    /** Volume up / down slide the floating settings panel in and out. */
+    val volumeKeysToggle: Boolean = true,
     val vibrateOnClick: Boolean = false,
     val overlayEnabled: Boolean = true,
     val scriptSpeed: Float = 1f,

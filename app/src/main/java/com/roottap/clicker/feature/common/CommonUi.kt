@@ -3,14 +3,11 @@ package com.roottap.clicker.feature.common
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text as MaterialText
-import androidx.compose.material3.TextButton as MaterialTextButton
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,12 +15,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import com.zeroui.kit.components.DialogButtons
+import com.zeroui.kit.components.ManagedDialog
 import com.zeroui.kit.components.Slider
 import com.zeroui.kit.components.Text
+import com.zeroui.kit.components.TextField
 
-/** Dialog with one numeric field; used for intervals, counts and coordinates. */
+/**
+ * Dialog with one numeric field; used for intervals, counts and coordinates.
+ * Built from ZeroUI pieces only: ManagedDialog, TextField, Slider and DialogButtons.
+ */
 @Composable
 fun NumberDialog(
     title: String,
@@ -37,47 +39,45 @@ fun NumberDialog(
 ) {
     var text by remember { mutableStateOf(initial.toString()) }
     val parsed = text.toIntOrNull()?.coerceIn(min, max)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { MaterialText(title) },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { input -> text = input.filter { it.isDigit() }.take(7) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+    ManagedDialog(onDismiss = onDismiss, title = title) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            TextField(
+                value = text,
+                onValueChange = { input -> text = input.filter { it.isDigit() }.take(7) },
+                singleLine = true,
+                label = if (suffix.isNotEmpty()) "单位 $suffix" else "数值",
+                useLabelAsPlaceholder = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (allowSlider) {
+                Spacer(Modifier.height(10.dp))
+                Slider(
+                    value = (parsed ?: initial).toFloat(),
+                    onValueChange = { text = it.toInt().toString() },
+                    valueRange = min.toFloat()..max.toFloat(),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                if (allowSlider) {
-                    Slider(
-                        value = (parsed ?: initial).toFloat(),
-                        onValueChange = { text = it.toInt().toString() },
-                        valueRange = min.toFloat()..max.toFloat(),
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    )
-                }
-                if (suffix.isNotEmpty()) {
-                    Text(
-                        text = "范围 $min – $max$suffix",
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                }
             }
-        },
-        confirmButton = {
-            MaterialTextButton(
-                enabled = parsed != null,
-                onClick = { parsed?.let(onConfirm) },
-            ) { MaterialText("确定") }
-        },
-        dismissButton = {
-            MaterialTextButton(onClick = onDismiss) { MaterialText("取消") }
-        },
-    )
+            Text(
+                text = "范围 $min – $max$suffix",
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            Spacer(Modifier.height(16.dp))
+            DialogButtons(
+                confirmText = "确定",
+                confirmEnabled = parsed != null,
+                onConfirm = { close { parsed?.let(onConfirm) } },
+                onCancel = { close(onDismiss) },
+            )
+        }
+    }
 }
 
-/** Dialog that edits one click point: coordinates plus an optional press duration override. */
+/**
+ * Edits one click point: coordinates, an optional press override and an optional delay
+ * that only this point waits before it is clicked.
+ */
 @Composable
 fun PointDialog(
     title: String,
@@ -85,61 +85,70 @@ fun PointDialog(
     initialY: Int,
     onDismiss: () -> Unit,
     initialPress: Int = 0,
+    initialDelay: Int = 0,
     showPress: Boolean = true,
-    onConfirm: (Int, Int, Int) -> Unit,
+    onConfirm: (x: Int, y: Int, pressMs: Int, delayMs: Int) -> Unit,
 ) {
     var x by remember { mutableStateOf(initialX.toString()) }
     var y by remember { mutableStateOf(initialY.toString()) }
-    var press by remember { mutableStateOf(initialPress.toString()) }
+    var press by remember { mutableStateOf(initialPress) }
+    var delay by remember { mutableStateOf(initialDelay) }
     val px = x.toIntOrNull()
     val py = y.toIntOrNull()
-    val pressValue = press.toIntOrNull() ?: 0
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { MaterialText(title) },
-        text = {
-            Column {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = x,
-                        onValueChange = { input -> x = input.filter { it.isDigit() }.take(5) },
-                        singleLine = true,
-                        label = { MaterialText("X") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f),
-                    )
-                    OutlinedTextField(
-                        value = y,
-                        onValueChange = { input -> y = input.filter { it.isDigit() }.take(5) },
-                        singleLine = true,
-                        label = { MaterialText("Y") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                if (showPress) {
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = press,
-                        onValueChange = { input -> press = input.filter { it.isDigit() }.take(5) },
-                        singleLine = true,
-                        label = { MaterialText("单独按压时长 ms（0 = 用默认）") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+
+    ManagedDialog(onDismiss = onDismiss, title = title) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TextField(
+                    value = x,
+                    onValueChange = { input -> x = input.filter { it.isDigit() }.take(5) },
+                    singleLine = true,
+                    label = "X",
+                    useLabelAsPlaceholder = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f),
+                )
+                TextField(
+                    value = y,
+                    onValueChange = { input -> y = input.filter { it.isDigit() }.take(5) },
+                    singleLine = true,
+                    label = "Y",
+                    useLabelAsPlaceholder = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f),
+                )
             }
-        },
-        confirmButton = {
-            MaterialTextButton(
-                enabled = px != null && py != null,
-                onClick = { if (px != null && py != null) onConfirm(px, py, pressValue) },
-            ) { MaterialText("确定") }
-        },
-        dismissButton = {
-            MaterialTextButton(onClick = onDismiss) { MaterialText("取消") }
-        },
-    )
+            if (showPress) {
+                Spacer(Modifier.height(12.dp))
+                Text(text = if (press == 0) "按压时长 · 用默认" else "按压时长 · ${formatMs(press)}")
+                Slider(
+                    value = press.toFloat(),
+                    onValueChange = { press = (it.toInt() / 50) * 50 },
+                    valueRange = 0f..10_000f,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(text = if (delay == 0) "点击延迟 · 不额外等待" else "点击延迟 · ${formatMs(delay)}")
+                Slider(
+                    value = delay.toFloat(),
+                    onValueChange = { delay = (it.toInt() / 50) * 50 },
+                    valueRange = 0f..10_000f,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            DialogButtons(
+                confirmText = "确定",
+                confirmEnabled = px != null && py != null,
+                onConfirm = {
+                    close {
+                        if (px != null && py != null) onConfirm(px, py, press, delay)
+                    }
+                },
+                onCancel = { close(onDismiss) },
+            )
+        }
+    }
 }
 
 /** Dialog with a single text field. */
@@ -152,26 +161,26 @@ fun TextInputDialog(
     onConfirm: (String) -> Unit,
 ) {
     var text by remember { mutableStateOf(initial) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { MaterialText(title) },
-        text = {
-            OutlinedTextField(
+    ManagedDialog(onDismiss = onDismiss, title = title) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            TextField(
                 value = text,
                 onValueChange = { text = it },
                 singleLine = true,
-                label = { MaterialText(hint) },
+                label = hint.ifEmpty { "名称" },
+                useLabelAsPlaceholder = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-        },
-        confirmButton = {
-            MaterialTextButton(
-                enabled = text.isNotBlank(),
-                onClick = { onConfirm(text.trim()) },
-            ) { MaterialText("确定") }
-        },
-        dismissButton = {
-            MaterialTextButton(onClick = onDismiss) { MaterialText("取消") }
-        },
-    )
+            Spacer(Modifier.height(16.dp))
+            DialogButtons(
+                confirmText = "保存",
+                confirmEnabled = text.isNotBlank(),
+                onConfirm = { close { onConfirm(text.trim()) } },
+                onCancel = { close(onDismiss) },
+            )
+        }
+    }
 }
+
+fun formatMs(value: Int): String =
+    if (value >= 1_000) String.format("%.2f 秒", value / 1000f) else "$value ms"

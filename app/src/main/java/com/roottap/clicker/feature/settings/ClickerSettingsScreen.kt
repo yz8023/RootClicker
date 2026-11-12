@@ -246,6 +246,16 @@ fun ClickerSettingsScreen(bottomPadding: Dp) {
                         summary = "在其他应用上层显示开始 / 停止 / 取点",
                     )
                     SwitchPreference(
+                        checked = data.options.volumeKeysToggle,
+                        onCheckedChange = { on ->
+                            ClickerStore.updateOptions { it.copy(volumeKeysToggle = on) }
+                            // Make sure a service is alive to own the key watcher.
+                            if (on && !ClickerService.running.value) ClickerService.start(context)
+                        },
+                        title = "音量键开关设置面板",
+                        summary = "音量上 = 展开悬浮设置面板，音量下 = 收起（需要 root）",
+                    )
+                    SwitchPreference(
                         checked = data.options.vibrateOnClick,
                         onCheckedChange = { vibrate ->
                             ClickerStore.updateOptions { it.copy(vibrateOnClick = vibrate) }

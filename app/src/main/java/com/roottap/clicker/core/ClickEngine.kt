@@ -99,6 +99,8 @@ class ClickEngine(private val sinkProvider: suspend () -> TouchSink?) {
                         ClickMode.SEQUENTIAL -> {
                             for (point in points) {
                                 if (!isActive) return@launch
+                                // Per point delay: every point can have its own rhythm.
+                                if (point.delayMs > 0) delay(point.delayMs.toLong())
                                 tapPoint(sink, profile, point, screenWidth, screenHeight)
                                 _state.update { it.copy(clicks = it.clicks + 1) }
                                 onClick?.invoke()
@@ -211,8 +213,10 @@ class ClickEngine(private val sinkProvider: suspend () -> TouchSink?) {
         }
     }
 
-    private fun orderedPoints(profile: ClickProfile): List<ClickPoint> =
-        if (profile.randomOrder) profile.points.shuffled() else profile.points
+    private fun orderedPoints(profile: ClickProfile): List<ClickPoint> {
+        val usable = profile.points.filter { it.enabled }
+        return if (profile.randomOrder) usable.shuffled() else usable
+    }
 
     private suspend fun tapPoint(
         sink: TouchSink,

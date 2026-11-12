@@ -30,6 +30,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.zeroui.kit.components.ArrowPreference
+import com.zeroui.kit.components.Badge
+import com.zeroui.kit.components.Button
 import com.zeroui.kit.components.ButtonVariant
 import com.zeroui.kit.components.ListCard
 import com.zeroui.kit.components.ListRow
@@ -44,6 +46,7 @@ import com.roottap.clicker.core.ClickerStore
 import com.roottap.clicker.core.RootStatus
 import com.roottap.clicker.core.Templates
 import com.roottap.clicker.feature.common.PointDialog
+import com.roottap.clicker.feature.common.formatMs
 import com.roottap.clicker.feature.common.TextInputDialog
 import com.roottap.clicker.service.ClickerService
 import kotlinx.coroutines.Dispatchers
@@ -175,40 +178,47 @@ fun ClickScreen(bottomPadding: Dp) {
             item {
                 ListCard(CardModifier) {
                     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            TextButton(
-                                text = if (engine.running) "停止连点" else "开始连点",
-                                variant = ButtonVariant.Primary,
-                                onClick = {
-                                    if (engine.running) ClickerRuntime.engine.stop("已停止") else startClicking()
-                                },
-                                modifier = Modifier.weight(1f),
-                            )
-                            TextButton(
-                                text = "取点",
-                                onClick = { openPicker() },
-                                modifier = Modifier.weight(1f),
-                            )
+                        // One primary action, everything else stays secondary.
+                        Button(
+                            onClick = {
+                                if (engine.running) ClickerRuntime.engine.stop("已停止") else startClicking()
+                            },
+                            variant = ButtonVariant.Primary,
+                            modifier = Modifier.fillMaxWidth(),
+                            minHeight = 52.dp,
+                        ) {
+                            Text(text = if (engine.running) "■  停止连点" else "▶  开始连点")
                         }
                         Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(
-                                text = "撤销",
+                                text = "＋ 取点",
+                                variant = ButtonVariant.Secondary,
+                                onClick = { openPicker() },
+                                modifier = Modifier.weight(1f),
+                                minHeight = 42.dp,
+                            )
+                            TextButton(
+                                text = "↶ 撤销",
+                                variant = ButtonVariant.Secondary,
                                 onClick = { message = ClickerStore.undo() ?: "没有可撤销的操作" },
                                 modifier = Modifier.weight(1f),
+                                minHeight = 42.dp,
                                 enabled = undoCount > 0,
                             )
                             TextButton(
-                                text = "清空点位",
+                                text = "清空",
+                                variant = ButtonVariant.Secondary,
                                 onClick = { ClickerStore.clearPoints() },
                                 modifier = Modifier.weight(1f),
+                                minHeight = 42.dp,
                                 enabled = profile.points.isNotEmpty(),
                             )
                         }
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "取点、间隔、按压、随机延迟、条件点击、模板切换都在悬浮窗里：" +
-                                "点悬浮条上的 ⚙ 展开。",
+                            text = "间隔、按压、随机延迟、条件点击、模板切换都在悬浮窗里：" +
+                                "点悬浮条上的 ⚙ 展开，音量键也能开关面板。",
                         )
                         if (serviceRunning) {
                             Text(text = "前台服务运行中，退出应用后仍会继续连点")
@@ -263,10 +273,14 @@ fun ClickScreen(bottomPadding: Dp) {
                     profile.points.forEachIndexed { index, point ->
                         ListRow(
                             title = "点位 ${index + 1}",
-                            summary = if (point.pressMs > 0) {
-                                "(${point.x}, ${point.y}) · 单独按压 ${point.pressMs} ms"
-                            } else {
-                                "(${point.x}, ${point.y}) · 用默认按压时长"
+                            summary = buildString {
+                                append("(${point.x}, ${point.y})")
+                                append(
+                                    if (point.pressMs > 0) " · 单独按压 ${formatMs(point.pressMs)}"
+                                    else " · 用默认按压 ${formatMs(profile.pressMs)}",
+                                )
+                                if (point.delayMs > 0) append(" · 延迟 ${formatMs(point.delayMs)}")
+                                if (!point.enabled) append(" · 已停用")
                             },
                             onClick = { editPoint = point },
                             endActions = {
@@ -296,11 +310,14 @@ fun ClickScreen(bottomPadding: Dp) {
             initialX = point.x,
             initialY = point.y,
             initialPress = point.pressMs,
+            initialDelay = point.delayMs,
             showPress = true,
             onDismiss = { editPoint = null },
-            onConfirm = { x, y, press ->
+            onConfirm = { x, y, press, delay ->
                 editPoint = null
-                ClickerStore.updatePoint(point.copy(x = x, y = y, pressMs = press))
+                ClickerStore.updatePoint(
+                    point.copy(x = x, y = y, pressMs = press, delayMs = delay),
+                )
             },
         )
     }
@@ -335,12 +352,5 @@ private fun describeTemplate(
 
 @Composable
 private fun StatusPill(text: String, positive: Boolean) {
-    val color = if (positive) Color(0xFF12A150) else Color(0xFFB8860B)
-    Box(
-        modifier = Modifier
-            .background(color.copy(alpha = 0.16f), CircleShape)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-    ) {
-        Text(text = text, color = color)
-    }
+    Badge(text = text, accent = positive)
 }

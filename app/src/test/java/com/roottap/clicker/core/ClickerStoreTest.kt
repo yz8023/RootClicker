@@ -105,6 +105,49 @@ class ClickerStoreTest {
     }
 
     @Test
+    fun perPointPressAndDelaySurviveAnEdit() {
+        val point = ClickerStore.addPoint(ClickPoint(x = 10, y = 10))
+        ClickerStore.updatePoint(point.copy(pressMs = 1_500, delayMs = 800))
+
+        val stored = ClickerStore.data.value.profile.points.single()
+        assertEquals(1_500, stored.pressMs)
+        assertEquals(800, stored.delayMs)
+        assertTrue(stored.enabled)
+
+        ClickerStore.updatePoint(stored.copy(x = 11), recordUndo = false)
+        assertEquals(800, ClickerStore.data.value.profile.points.single().delayMs)
+    }
+
+    @Test
+    fun aDisabledPointIsKeptButMarked() {
+        val point = ClickerStore.addPoint(ClickPoint(x = 5, y = 6))
+        ClickerStore.updatePoint(point.copy(enabled = false))
+
+        val stored = ClickerStore.data.value.profile.points.single()
+        assertTrue(!stored.enabled)
+        assertEquals(5, stored.x)
+    }
+
+    @Test
+    fun sliderEditsDoNotFloodTheUndoHistory() {
+        val point = ClickerStore.addPoint(ClickPoint(x = 1, y = 1))
+        assertEquals(1, ClickerStore.undoCount.value)
+        repeat(5) { step ->
+            ClickerStore.updatePoint(point.copy(delayMs = step * 100), recordUndo = false)
+        }
+        assertEquals(1, ClickerStore.undoCount.value)
+        assertEquals(400, ClickerStore.data.value.profile.points.single().delayMs)
+    }
+
+    @Test
+    fun newPointsDefaultToEnabledWithNoDelay() {
+        val point = ClickerStore.addPoint(ClickPoint(x = 1, y = 2))
+        assertEquals(0, point.delayMs)
+        assertTrue(point.enabled)
+        assertEquals(0, point.pressMs)
+    }
+
+    @Test
     fun bumpHelpersStayInsideTheirRanges() {
         ClickerStore.updateProfile { it.copy(randomDelayMs = 0, intervalMs = 5) }
         ClickerStore.bumpRandomDelay(-50)

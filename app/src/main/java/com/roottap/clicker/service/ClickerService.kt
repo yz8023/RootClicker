@@ -3,6 +3,7 @@ package com.roottap.clicker.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.media.AudioManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
@@ -19,6 +20,9 @@ import com.roottap.clicker.core.ClickerRuntime
 import com.roottap.clicker.core.ClickerStore
 import com.roottap.clicker.core.EngineState
 import com.roottap.clicker.core.ScriptPlayer
+import com.roottap.clicker.core.VolumeKeys
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -58,7 +62,10 @@ class ClickerService : Service() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val main = Handler(Looper.getMainLooper())
     private var overlay: OverlayController? = null
+    private var volumeWatcher: VolumeKeys.Watcher? = null
+    private var volumeKeysApplied: Boolean? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -66,7 +73,28 @@ class ClickerService : Service() {
         createChannel()
         startForeground(NotificationId, buildNotification(ClickerRuntime.engine.state.value))
         _running.value = true
-        overlay = OverlayController(this, object : OverlayController.Actions {
+        overlay = buildOverlay()
+        scope.launch {
+            ClickerRuntime.engine.state.collect { state ->
+                overlay?.onState(state)
+                notify(buildNotification(state))
+            }
+        }
+        scope.launch {
+            // Markers follow the profile; the Compose panels observe the store themselves.
+            ClickerStore.data.collect { data ->
+                overlay?.onDataChanged()
+                syncVolumeWatcher(data.options.volumeKeysToggle)
+            }
+        }
+        if (ClickerStore.data.value.options.overlayEnabled) {
+            overlay?.show()
+        }
+        syncVolumeWatcher(ClickerStore.data.value.options.volumeKeysToggle)
+    }
+
+    private fun buildOverlay(): OverlayController =
+        OverlayController(this, object : OverlayController.Actions {
             override fun onToggle() = toggleClicking()
 
             override fun onCloseOverlay() {
@@ -79,20 +107,6 @@ class ClickerService : Service() {
                 ClickerStore.updatePoint(point)
             }
         })
-        scope.launch {
-            ClickerRuntime.engine.state.collect { state ->
-                overlay?.onState(state)
-                notify(buildNotification(state))
-            }
-        }
-        scope.launch {
-            // Keeps the floating panel in sync with points, templates and timing changes.
-            ClickerStore.data.collect { overlay?.onDataChanged() }
-        }
-        if (ClickerStore.data.value.options.overlayEnabled) {
-            overlay?.show()
-        }
-    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -111,6 +125,7 @@ class ClickerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        stopVolumeWatcher()
         _running.value = false
         ClickerRuntime.engine.stop()
         ScriptPlayer.stop()
@@ -118,6 +133,55 @@ class ClickerService : Service() {
         overlay = null
         scope.cancel()
         super.onDestroy()
+    }
+
+    /** Volume up slides the settings panel in, volume down slides it out. */
+    private fun syncVolumeWatcher(enabled: Boolean) {
+        if (volumeKeysApplied == enabled) return
+        volumeKeysApplied = enabled
+        stopVolumeWatcher()
+        if (!enabled) return
+        val watcher = VolumeKeys.Watcher(
+            onVolumeUp = {
+                main.post {
+                    if (!ClickerStore.data.value.options.overlayEnabled) {
+                        toast("悬浮窗已关闭，请在应用内重新打开")
+                        return@post
+                    }
+                    restoreVolume {
+                        if (overlay == null) overlay = buildOverlay()
+                        overlay?.openPanel()
+                    }
+                }
+            },
+            onVolumeDown = {
+                main.post { restoreVolume { overlay?.closePanel() } }
+            },
+        )
+        volumeWatcher = watcher
+        // Finding the input device shells out to root, so keep it off the main thread.
+        scope.launch(Dispatchers.IO) {
+            val ok = watcher.start()
+            ClickerRuntime.log(
+                if (ok) "音量键已接管：${watcher.devicePath}" else "音量键监听启动失败（需要 root 读取输入设备）",
+            )
+        }
+    }
+
+    private fun stopVolumeWatcher() {
+        volumeWatcher?.stop()
+        volumeWatcher = null
+    }
+
+    /** Puts the media volume back after a key that was used for the panel. */
+    private fun restoreVolume(block: () -> Unit) {
+        val audio = getSystemService(AudioManager::class.java)
+        val stream = AudioManager.STREAM_MUSIC
+        val before = runCatching { audio.getStreamVolume(stream) }.getOrDefault(-1)
+        block()
+        if (before >= 0) {
+            main.postDelayed({ runCatching { audio.setStreamVolume(stream, before, 0) } }, 180)
+        }
     }
 
     private fun toggleClicking() {
