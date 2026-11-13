@@ -204,6 +204,37 @@ class ClickerStoreTest {
     }
 
     @Test
+    fun aSwipePointKeepsItsEndPointAndDuration() {
+        val point = ClickerStore.addPoint(
+            ClickPoint(x = 100, y = 200, kind = PointKind.SWIPE, x2 = 400, y2 = 800, swipeMs = 350),
+        )
+        val stored = ClickerStore.data.value.profile.points.single()
+        assertTrue(stored.isSwipe)
+        assertEquals(400, stored.x2)
+        assertEquals(800, stored.y2)
+        assertEquals(350, stored.swipeMs)
+        assertEquals("(100, 200) → (400, 800)", stored.label)
+
+        ClickerStore.updatePoint(point.copy(swipeMs = 600))
+        assertEquals(600, ClickerStore.data.value.profile.points.single().swipeMs)
+    }
+
+    @Test
+    fun plansCarrySwipesAndTapsTogether() {
+        ClickerStore.addPoint(ClickPoint(x = 1, y = 1))
+        ClickerStore.addPoint(ClickPoint(x = 2, y = 2, kind = PointKind.SWIPE, x2 = 9, y2 = 9, swipeMs = 500))
+        val plan = ClickerStore.savePlan("混合")
+        ClickerStore.clearPoints()
+
+        ClickerStore.applyPlan(plan)
+
+        val points = ClickerStore.data.value.profile.points
+        assertEquals(2, points.size)
+        assertEquals(1, points.count { it.isSwipe })
+        assertEquals(500, points.first { it.isSwipe }.swipeMs)
+    }
+
+    @Test
     fun bumpHelpersStayInsideTheirRanges() {
         ClickerStore.updateProfile { it.copy(randomDelayMs = 0, intervalMs = 5) }
         ClickerStore.bumpRandomDelay(-50)

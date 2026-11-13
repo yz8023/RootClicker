@@ -31,8 +31,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.layout.size
+import com.zeroui.kit.components.Icon
+import com.zeroui.kit.components.IconButton
+import com.roottap.clicker.R
 import androidx.compose.ui.unit.dp
 import com.zeroui.kit.components.ArrowPreference
+import com.zeroui.kit.components.Button
 import com.zeroui.kit.components.ButtonVariant
 import com.zeroui.kit.components.Card
 import com.zeroui.kit.components.HorizontalDivider
@@ -61,6 +67,8 @@ import kotlin.math.roundToInt
 class OverlayPanelState {
     var open by mutableStateOf(false)
     var picking by mutableStateOf(false)
+    /** Picking swipes: two taps make one A → B gesture. */
+    var swipePicking by mutableStateOf(false)
     var colorMode by mutableStateOf(false)
     var bubblePointId by mutableStateOf<Long?>(null)
 }
@@ -92,16 +100,56 @@ private fun CompactButton(
     )
 }
 
+/** Every bar action is a drawn icon, never a text glyph. */
+@Composable
+private fun IconBtn(
+    icon: Int,
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    primary: Boolean = false,
+) {
+    if (primary) {
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            variant = ButtonVariant.Primary,
+            minWidth = 40.dp,
+            minHeight = 34.dp,
+            insideMargin = PaddingValues(horizontal = 10.dp, vertical = 3.dp),
+        ) {
+            Icon(
+                painter = painterResource(icon),
+                contentDescription = label,
+                modifier = Modifier.size(17.dp),
+            )
+        }
+        return
+    }
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        minWidth = 36.dp,
+        minHeight = 34.dp,
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = label,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
 // ------------------------------------------------------------------ control bar
 
 /**
- * One line, and it changes meaning instead of opening a new screen: normally it starts the
- * clicker, adds a point, undoes the last point and opens settings; while adding points it shows
- * the count and a way out, and the taps land on the real screen behind it.
+ * The bar has exactly two creation buttons: one adds a tap, one draws a swipe (A to B).
+ * While picking it keeps the same place and only shows "how many, undo, done".
  */
 @Composable
 fun ControlBarContent(
     picking: Boolean,
+    swipePicking: Boolean,
     colorMode: Boolean,
     running: Boolean,
     clicks: Long,
@@ -109,7 +157,8 @@ fun ControlBarContent(
     modeName: String,
     undoCount: Int,
     onToggle: () -> Unit,
-    onCreate: () -> Unit,
+    onPickTap: () -> Unit,
+    onPickSwipe: () -> Unit,
     onUndo: () -> Unit,
     onPanel: () -> Unit,
     onToggleColor: () -> Unit,
@@ -117,12 +166,12 @@ fun ControlBarContent(
     onDrag: (Float, Float) -> Unit,
     onDragEnd: () -> Unit,
 ) {
-    Card(cornerRadius = 24.dp, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+    Card(cornerRadius = 24.dp, contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             // Drag grip: the buttons keep working, the grip moves the bar.
             Box(
                 modifier = Modifier
-                    .size(width = 20.dp, height = 30.dp)
+                    .size(width = 22.dp, height = 30.dp)
                     .pointerInput(Unit) {
                         detectDragGestures(
                             onDragEnd = { onDragEnd() },
@@ -134,33 +183,43 @@ fun ControlBarContent(
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(text = "⋮⋮")
+                Icon(
+                    painter = painterResource(R.drawable.ic_grip),
+                    contentDescription = "拖动",
+                    modifier = Modifier.size(16.dp),
+                )
             }
             if (picking) {
                 Text(
-                    text = if (colorMode) "点屏幕取色" else "点屏幕加点 · $pointCount",
+                    text = when {
+                        colorMode -> "点屏幕取色"
+                        swipePicking -> "点两下 · A → B"
+                        else -> "点屏幕加点 · $pointCount"
+                    },
                     modifier = Modifier.padding(end = 2.dp),
                 )
-                CompactButton(text = "取色", primary = colorMode, onClick = onToggleColor)
-                CompactButton(text = "↶", onClick = onUndo, enabled = undoCount > 0)
-                CompactButton(text = "完成", primary = true, onClick = onFinishPicking)
+                IconBtn(icon = R.drawable.ic_color, label = "取色", onClick = onToggleColor, primary = colorMode)
+                IconBtn(icon = R.drawable.ic_undo, label = "撤销", onClick = onUndo, enabled = undoCount > 0)
+                IconBtn(icon = R.drawable.ic_check, label = "完成", onClick = onFinishPicking, primary = true)
             } else {
                 Text(
                     text = when {
                         running -> "运行 ${clicks} 次"
-                        pointCount == 0 -> "点 ＋ 取点"
+                        pointCount == 0 -> "先取点"
                         else -> "$pointCount 点 · $modeName"
                     },
                     modifier = Modifier.padding(end = 2.dp),
                 )
-                CompactButton(
-                    text = if (running) "■" else "▶",
+                IconBtn(
+                    icon = if (running) R.drawable.ic_stop else R.drawable.ic_play,
+                    label = if (running) "停止" else "开始",
                     onClick = onToggle,
                     primary = true,
                 )
-                CompactButton(text = "＋", onClick = onCreate)
-                CompactButton(text = "↶", onClick = onUndo, enabled = undoCount > 0)
-                CompactButton(text = "⚙", onClick = onPanel)
+                IconBtn(icon = R.drawable.ic_tap, label = "取点", onClick = onPickTap)
+                IconBtn(icon = R.drawable.ic_swipe, label = "取滑动", onClick = onPickSwipe)
+                IconBtn(icon = R.drawable.ic_undo, label = "撤销", onClick = onUndo, enabled = undoCount > 0)
+                IconBtn(icon = R.drawable.ic_settings, label = "设置", onClick = onPanel)
             }
         }
     }
@@ -178,6 +237,7 @@ fun PointBubbleContent(
     point: ClickPoint,
     defaultPress: Int,
     onPress: (Int) -> Unit,
+    onSwipeMs: (Int) -> Unit,
     onDelay: (Int) -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
     onDelete: () -> Unit,
@@ -190,41 +250,55 @@ fun PointBubbleContent(
                 .verticalScroll(rememberScrollState()),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(text = "点位 $index")
+                Icon(
+                    painter = painterResource(if (point.isSwipe) R.drawable.ic_swipe else R.drawable.ic_tap),
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                )
+                Text(
+                    text = "  点位 $index · ${point.kindName}",
+                    modifier = Modifier.padding(end = 4.dp),
+                )
                 Spacer(Modifier.weight(1f))
-                CompactButton(text = "完成", onClick = onClose, primary = true)
+                IconBtn(icon = R.drawable.ic_check, label = "完成", onClick = onClose, primary = true)
             }
             SliderRow(
-                title = "点击时长",
-                value = point.pressMs,
-                range = 0..10_000,
-                step = 50,
-                format = { if (it == 0) "用默认 ${formatMs(defaultPress)}" else formatMs(it) },
-                onChange = onPress,
+                title = point.label,
+                value = if (point.isSwipe) point.swipeMs else point.pressMs,
+                range = if (point.isSwipe) 20..5_000 else 0..10_000,
+                step = if (point.isSwipe) 20 else 50,
+                format = {
+                    if (point.isSwipe) "滑动用时 ${formatMs(it)}"
+                    else if (it == 0) "点击时长 · 用默认 ${formatMs(defaultPress)}"
+                    else "点击时长 ${formatMs(it)}"
+                },
+                onChange = { if (point.isSwipe) onSwipeMs(it) else onPress(it) },
             )
             SliderRow(
                 title = "点击延迟",
                 value = point.delayMs,
                 range = 0..10_000,
                 step = 50,
-                format = { if (it == 0) "不等待" else "点它前等 ${formatMs(it)}" },
+                format = { if (it == 0) "不等待" else "轮到这个点前等 ${formatMs(it)}" },
                 onChange = onDelay,
             )
             HorizontalDivider(modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp))
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                CompactButton(
-                    text = if (point.enabled) "停用" else "启用",
+                IconBtn(
+                    icon = if (point.enabled) R.drawable.ic_check else R.drawable.ic_close,
+                    label = if (point.enabled) "停用" else "启用",
                     onClick = { onToggleEnabled(!point.enabled) },
                 )
+                Text(text = if (point.enabled) "已启用" else "已停用")
                 Spacer(Modifier.weight(1f))
-                CompactButton(text = "删除", onClick = onDelete)
+                IconBtn(icon = R.drawable.ic_delete, label = "删除", onClick = onDelete)
             }
         }
     }
@@ -236,10 +310,12 @@ fun PointBubbleContent(
 fun PanelContent(
     state: OverlayPanelState,
     onClose: () -> Unit,
-    onCreate: () -> Unit,
+    onPickTap: () -> Unit,
+    onPickSwipe: () -> Unit,
     onToast: (String) -> Unit,
     onTestTap: (ClickPoint) -> Unit,
     onGrabColor: () -> Unit,
+    onOpenApp: () -> Unit,
     onHideOverlay: () -> Unit,
 ) {
     val data by ClickerStore.data.collectAsState()
@@ -344,14 +420,32 @@ fun PanelContent(
             SectionTitle("点位 (${profile.points.size})")
             ListCard(Modifier.padding(horizontal = 12.dp, vertical = 2.dp)) {
                 ListRow(
-                    title = "＋ 取点",
-                    summary = "点一下就开始，直接在屏幕上点；点完按「完成」或音量下键",
-                    onClick = onCreate,
+                    title = "取点（点一下）",
+                    summary = "开始后直接在屏幕上点，点哪加哪；点完按「完成」或音量下键",
+                    startAction = {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_tap),
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    onClick = onPickTap,
+                )
+                ListRow(
+                    title = "取滑动（A → B）",
+                    summary = "屏幕上点两下：第一下是起点，第二下是终点",
+                    startAction = {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_swipe),
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    onClick = onPickSwipe,
                 )
                 ListRow(
                     title = "改单个点位",
-                    summary = "直接点屏幕上的圆点，改它的点击时长和延迟",
-                    onClick = onCreate,
+                    summary = "直接点屏幕上的圆点 / 滑动轨迹的起点圆点，改它的时长和延迟",
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -442,6 +536,18 @@ fun PanelContent(
                     onCheckedChange = { on -> ClickerStore.updateOptions { it.copy(volumeKeysToggle = on) } },
                     title = "音量键开关面板",
                     summary = "音量上展开 / 音量下收起，取点时音量下＝完成",
+                )
+                ArrowPreference(
+                    title = "打开应用页面",
+                    summary = "看点位、方案、模板和设置",
+                    startAction = {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_app),
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    onClick = onOpenApp,
                 )
                 ArrowPreference(
                     title = "关闭悬浮窗",

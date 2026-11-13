@@ -85,6 +85,8 @@ object ClickerRuntime {
     suspend fun checkRoot(): Boolean = withContext(Dispatchers.IO) {
         val granted = RootShell.hasRoot()
         _rootStatus.value = if (granted) RootStatus.GRANTED else RootStatus.DENIED
+        // Remembered so the next cold start knows whether it may jump straight to the overlay.
+        runCatching { ClickerStore.updateOptions { it.copy(lastRootOk = granted) } }
         log(if (granted) "root 已授权 · ${RootShell.describeDevice()}" else "root 授权失败")
         granted
     }

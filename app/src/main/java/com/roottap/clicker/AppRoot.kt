@@ -57,6 +57,9 @@ private fun AppNavGraph(pageTransition: PageTransition) {
                 onNavigate = { route -> controller.pushUnique(route) },
             )
         }
+        page<AppRoute.Setup>(controller) {
+            SetupScreen(onDone = { controller.pop() }, onBack = { controller.pop() })
+        }
         page<AppRoute.AppSettings>(controller) {
             SettingsPage(controller, R.string.app_settings) { padding ->
                 AppSettingsPage(

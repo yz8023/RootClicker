@@ -21,12 +21,17 @@ enum class ClickMode { SEQUENTIAL, SIMULTANEOUS, RANDOM }
 @Serializable
 enum class ConditionKind { NONE, COLOR }
 
+/** What a point does when the loop reaches it. */
+@Serializable
+enum class PointKind { TAP, SWIPE }
+
 /**
- * One click position.
+ * One action position: a tap, or a swipe from ([x], [y]) to ([x2], [y2]).
  *
  * @param pressMs press duration; 0 means "use the profile default".
  * @param delayMs extra wait before this point inside a cycle, so each point can have its own pace.
  * @param enabled false keeps the point on screen but the engine skips it.
+ * @param swipeMs how long the finger takes to travel from A to B, swipes only.
  */
 @Serializable
 data class ClickPoint(
@@ -36,8 +41,14 @@ data class ClickPoint(
     val pressMs: Int = 0,
     val delayMs: Int = 0,
     val enabled: Boolean = true,
+    val kind: PointKind = PointKind.TAP,
+    val x2: Int = 0,
+    val y2: Int = 0,
+    val swipeMs: Int = 300,
 ) {
-    val label: String get() = "($x, $y)"
+    val isSwipe: Boolean get() = kind == PointKind.SWIPE
+    val label: String get() = if (isSwipe) "($x, $y) → ($x2, $y2)" else "($x, $y)"
+    val kindName: String get() = if (isSwipe) "滑动" else "点击"
 }
 
 /** Wait until the pixel at ([x], [y]) matches [color] before clicking. */
@@ -109,6 +120,8 @@ data class EngineOptions(
     val volumeKeysToggle: Boolean = true,
     /** Stop the loop when another app comes to the front. */
     val stopOnAppSwitch: Boolean = false,
+    /** Result of the last root check, so a cold start can decide without shelling out. */
+    val lastRootOk: Boolean = false,
     /** Where the user parked the control bar; -1 means "pick a default spot". */
     val barX: Int = -1,
     val barY: Int = -1,
@@ -124,6 +137,8 @@ data class EngineOptions(
 data class ClickTemplate(
     val id: Long = 0L,
     val name: String = "",
+    /** Plain language description shown in the list, so a name alone is never the only clue. */
+    val note: String = "",
     val profile: ClickProfile = ClickProfile(),
 ) {
     /** Template with the layout dependent parts stripped, so it can be applied anywhere. */

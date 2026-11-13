@@ -226,6 +226,14 @@ class ClickEngine(private val sinkProvider: suspend () -> TouchSink?) {
         screenHeight: Int,
     ) {
         val (x, y) = resolve(point.x, point.y, profile, screenWidth, screenHeight)
+        if (point.isSwipe) {
+            // A swipe is just two points with the finger held between them.
+            val (x2, y2) = resolve(point.x2, point.y2, profile, screenWidth, screenHeight)
+            val travel = point.swipeMs.coerceIn(20, 30_000)
+            sink.stroke(x, y, x2, y2, travel)
+            delay(travel.toLong())
+            return
+        }
         val press = (if (point.pressMs > 0) point.pressMs else profile.pressMs).coerceIn(1, 60_000)
         sink.tap(x, y, press)
         // The injector blocks for the whole press; waiting here keeps the rhythm honest.
@@ -239,16 +247,23 @@ class ClickEngine(private val sinkProvider: suspend () -> TouchSink?) {
         screenWidth: Int,
         screenHeight: Int,
     ) {
-        val xs = IntArray(points.size)
-        val ys = IntArray(points.size)
-        points.forEachIndexed { index, point ->
-            val (x, y) = resolve(point.x, point.y, profile, screenWidth, screenHeight)
-            xs[index] = x
-            ys[index] = y
+        // Fingers can only be put down together for taps; swipes run one after another.
+        val taps = points.filter { !it.isSwipe }
+        if (taps.isNotEmpty()) {
+            val xs = IntArray(taps.size)
+            val ys = IntArray(taps.size)
+            taps.forEachIndexed { index, point ->
+                val (x, y) = resolve(point.x, point.y, profile, screenWidth, screenHeight)
+                xs[index] = x
+                ys[index] = y
+            }
+            val press = profile.pressMs.coerceIn(1, 60_000)
+            sink.multiTap(xs, ys, press)
+            delay(press.toLong())
         }
-        val press = profile.pressMs.coerceIn(1, 60_000)
-        sink.multiTap(xs, ys, press)
-        delay(press.toLong())
+        points.filter { it.isSwipe }.forEach { point ->
+            tapPoint(sink, profile, point, screenWidth, screenHeight)
+        }
     }
 
     private fun resolve(

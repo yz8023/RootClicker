@@ -230,7 +230,10 @@ fun MainScreen(
             key = { visibleTabs.getOrNull(it)?.name ?: "page-$it" },
         ) { index ->
             when (visibleTabs.getOrNull(index)) {
-                MainTab.Home -> ClickScreen(bottomPadding = padding)
+                MainTab.Home -> ClickScreen(
+                    bottomPadding = padding,
+                    onOpenSetup = { onNavigate(AppRoute.Setup) },
+                )
                 MainTab.Components -> RecordScreen(bottomPadding = padding)
                 MainTab.Settings -> ClickerSettingsScreen(bottomPadding = padding)
                 null -> Unit

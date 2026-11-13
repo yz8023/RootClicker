@@ -50,6 +50,7 @@ class OverlayController(
 
     interface Actions {
         fun onToggle()
+        fun onOpenApp()
         fun onCloseOverlay()
         fun onPointMoved(point: ClickPoint)
     }
@@ -71,6 +72,11 @@ class OverlayController(
 
     private var bubbleHost: OverlayComposeHost? = null
     private var pickingStartCount = 0
+
+    /** First tap of a swipe that is still waiting for its end point. */
+    private var swipeAnchor: android.graphics.Point? = null
+    private var anchorMarker: View? = null
+    private var linesView: com.roottap.clicker.service.overlay.SwipeLinesView? = null
 
     private val markers = mutableListOf<View>()
     private var markerSignature: String? = null
@@ -105,7 +111,11 @@ class OverlayController(
         val data = ClickerStore.data.value
         val signature = buildString {
             append(data.options.showMarkers).append(panelState.picking)
-            data.profile.points.forEach { append('|').append(it.id).append(',').append(it.x).append(',').append(it.y) }
+            data.profile.points.forEach {
+                append('|').append(it.id).append(',').append(it.kind)
+                append(',').append(it.x).append(',').append(it.y)
+                append(',').append(it.x2).append(',').append(it.y2)
+            }
             data.profile.points.forEach { if (!it.enabled) append('/').append(it.id) }
         }
         if (signature == markerSignature) return
@@ -152,6 +162,7 @@ class OverlayController(
                 ) {
                     ControlBarContent(
                         picking = panelState.picking,
+                        swipePicking = panelState.swipePicking,
                         colorMode = panelState.colorMode,
                         running = state.running,
                         clicks = state.clicks,
@@ -159,7 +170,8 @@ class OverlayController(
                         modeName = modeName(data.profile.mode),
                         undoCount = undoCount,
                         onToggle = { actions.onToggle() },
-                        onCreate = { startPicking() },
+                        onPickTap = { startPicking(swipe = false) },
+                        onPickSwipe = { startPicking(swipe = true) },
                         onUndo = {
                             toast(ClickerStore.undo() ?: "没有可撤销的操作")
                             refreshMarkers()
@@ -247,10 +259,12 @@ class OverlayController(
                     PanelContent(
                         state = panelState,
                         onClose = { closePanel() },
-                        onCreate = { startPicking() },
+                        onPickTap = { startPicking(swipe = false) },
+                        onPickSwipe = { startPicking(swipe = true) },
                         onToast = { toast(it) },
                         onTestTap = { point -> testTap(point) },
                         onGrabColor = { grabColor() },
+                        onOpenApp = { actions.onOpenApp() },
                         onHideOverlay = {
                             closePanel()
                             actions.onCloseOverlay()
@@ -290,13 +304,20 @@ class OverlayController(
      * Creating a point is one tap on the bar and then taps on the real screen: no dimmed overlay,
      * no second control bar. The floating bar steps aside while the user taps.
      */
-    fun startPicking() {
+    fun startPicking(swipe: Boolean = false) {
         if (!canDraw()) {
             toast("请先授予悬浮窗权限")
             return
         }
-        if (panelState.picking) return
+        if (panelState.picking) {
+            // Tapping the other creation button switches mode without leaving picking.
+            panelState.swipePicking = swipe
+            panelState.colorMode = false
+            clearSwipeAnchor()
+            return
+        }
         pickingStartCount = ClickerStore.data.value.profile.points.size
+        panelState.swipePicking = swipe
         closePanel()
         closeBubble()
         if (barHost == null) attachBar()
@@ -316,11 +337,13 @@ class OverlayController(
             if (event.actionMasked == MotionEvent.ACTION_UP) {
                 val x = event.rawX.toInt().coerceIn(0, screen.x - 1)
                 val y = event.rawY.toInt().coerceIn(0, screen.y - 1)
-                if (panelState.colorMode) {
-                    sampleColorAt(x, y)
-                } else {
-                    ClickerStore.addPoint(ClickPoint(x = x, y = y))
-                    ClickerStore.normalizeTo(screen.x, screen.y)
+                when {
+                    panelState.colorMode -> sampleColorAt(x, y)
+                    panelState.swipePicking -> handleSwipeTap(x, y)
+                    else -> {
+                        ClickerStore.addPoint(ClickPoint(x = x, y = y))
+                        ClickerStore.normalizeTo(screen.x, screen.y)
+                    }
                 }
                 view.performClick()
             }
@@ -347,8 +370,64 @@ class OverlayController(
         val added = ClickerStore.data.value.profile.points.size - pickingStartCount
         panelState.picking = false
         panelState.colorMode = false
+        panelState.swipePicking = false
+        clearSwipeAnchor()
         refreshMarkers()
         if (!silent && added > 0) toast("加了 $added 个点 · 点圆点能改它的时长和延迟")
+    }
+
+    /**
+     * A swipe is two taps: the first one parks a preview dot, the second one creates the point.
+     * After that the next tap starts a new swipe, so several can be drawn without leaving picking.
+     */
+    private fun handleSwipeTap(x: Int, y: Int) {
+        val anchor = swipeAnchor
+        if (anchor == null) {
+            swipeAnchor = android.graphics.Point(x, y)
+            showAnchorMarker(x, y)
+            toast("起点 ($x, $y) · 再点一下画终点")
+            return
+        }
+        ClickerStore.addPoint(
+            ClickPoint(
+                x = anchor.x,
+                y = anchor.y,
+                kind = com.roottap.clicker.core.PointKind.SWIPE,
+                x2 = x,
+                y2 = y,
+                swipeMs = 300,
+            ),
+        )
+        ClickerStore.normalizeTo(screen.x, screen.y)
+        clearSwipeAnchor()
+        refreshMarkers()
+        toast("已加滑动 (${anchor.x}, ${anchor.y}) → ($x, $y)")
+    }
+
+    private fun showAnchorMarker(x: Int, y: Int) {
+        clearSwipeAnchor()
+        val dot = TextView(context).apply {
+            text = "A"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            gravity = Gravity.CENTER
+            background = androidx.core.content.ContextCompat.getDrawable(
+                context,
+                com.roottap.clicker.R.drawable.marker_anchor,
+            )
+        }
+        val params = overlayParams(width = dp(26), height = dp(26), x = x - dp(13), y = y - dp(13))
+            .apply { flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE }
+        runCatching {
+            windowManager.addView(dot, params)
+            anchorMarker = dot
+        }
+    }
+
+    private fun clearSwipeAnchor() {
+        anchorMarker?.let { runCatching { windowManager.removeView(it) } }
+        anchorMarker = null
+        swipeAnchor = null
     }
 
     // ---------------------------------------------------------------- bubble
@@ -373,6 +452,7 @@ class OverlayController(
                             point = point,
                             defaultPress = state.profile.pressMs,
                             onPress = { value -> editPoint(pointId) { it.copy(pressMs = value) } },
+                            onSwipeMs = { value -> editPoint(pointId) { it.copy(swipeMs = value) } },
                             onDelay = { value -> editPoint(pointId) { it.copy(delayMs = value) } },
                             onToggleEnabled = { enabled ->
                                 editPoint(pointId, recordUndo = true) { it.copy(enabled = enabled) }
@@ -421,6 +501,7 @@ class OverlayController(
             clearMarkers()
             return
         }
+        syncSwipeLines(points.filter { it.isSwipe })
         if (markers.size == points.size && markers.isNotEmpty()) {
             points.forEachIndexed { index, point ->
                 val view = markers[index]
@@ -453,7 +534,38 @@ class OverlayController(
     private fun clearMarkers() {
         markers.forEach { runCatching { windowManager.removeView(it) } }
         markers.clear()
+        linesView?.let { runCatching { windowManager.removeView(it) } }
+        linesView = null
         markerSignature = null
+    }
+
+    /** Dashed A→B lines for swipe points, kept below the numbered dots. */
+    private fun syncSwipeLines(swipes: List<ClickPoint>) {
+        if (swipes.isEmpty()) {
+            linesView?.let { runCatching { windowManager.removeView(it) } }
+            linesView = null
+            return
+        }
+        val existing = linesView
+        if (existing != null) {
+            existing.points = swipes
+            return
+        }
+        val view = com.roottap.clicker.service.overlay.SwipeLinesView(context)
+        view.points = swipes
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        runCatching {
+            windowManager.addView(view, params)
+            linesView = view
+        }
     }
 
     private fun markerFlags(): Int {
@@ -507,11 +619,22 @@ class OverlayController(
                 MotionEvent.ACTION_UP -> {
                     if (dragging) {
                         if (params != null) {
+                            val nx = (params.x + dp(13)).coerceIn(0, screen.x - 1)
+                            val ny = (params.y + dp(13)).coerceIn(0, screen.y - 1)
+                            val dx = nx - point.x
+                            val dy = ny - point.y
                             actions.onPointMoved(
-                                point.copy(
-                                    x = (params.x + dp(13)).coerceIn(0, screen.x - 1),
-                                    y = (params.y + dp(13)).coerceIn(0, screen.y - 1),
-                                ),
+                                if (point.isSwipe) {
+                                    // Dragging a swipe moves the whole gesture, not just point A.
+                                    point.copy(
+                                        x = nx,
+                                        y = ny,
+                                        x2 = (point.x2 + dx).coerceIn(0, screen.x - 1),
+                                        y2 = (point.y2 + dy).coerceIn(0, screen.y - 1),
+                                    )
+                                } else {
+                                    point.copy(x = nx, y = ny)
+                                },
                             )
                         }
                     } else {

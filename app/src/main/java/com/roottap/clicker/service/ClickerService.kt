@@ -50,6 +50,7 @@ class ClickerService : Service() {
         const val ActionStop = "com.roottap.clicker.STOP"
         const val ActionShowOverlay = "com.roottap.clicker.OVERLAY"
         const val ActionPick = "com.roottap.clicker.PICK"
+        const val ActionPickSwipe = "com.roottap.clicker.PICK_SWIPE"
 
         private val _running = MutableStateFlow(false)
 
@@ -109,6 +110,14 @@ class ClickerService : Service() {
         OverlayController(this, object : OverlayController.Actions {
             override fun onToggle() = toggleClicking()
 
+            override fun onOpenApp() {
+                runCatching {
+                    startActivity(
+                        com.roottap.clicker.showUiIntent(this@ClickerService),
+                    )
+                }
+            }
+
             override fun onCloseOverlay() {
                 overlay?.hide()
                 ClickerStore.updateOptions { it.copy(overlayEnabled = false) }
@@ -127,7 +136,11 @@ class ClickerService : Service() {
             ActionShowOverlay -> overlay?.show()
             ActionPick -> {
                 overlay?.show()
-                overlay?.startPicking()
+                overlay?.startPicking(swipe = false)
+            }
+            ActionPickSwipe -> {
+                overlay?.show()
+                overlay?.startPicking(swipe = true)
             }
             else -> if (ClickerStore.data.value.options.overlayEnabled) overlay?.show()
         }

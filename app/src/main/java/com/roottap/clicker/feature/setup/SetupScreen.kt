@@ -216,7 +216,7 @@ fun PermissionSection(
  * from a system page re-checks everything automatically.
  */
 @Composable
-fun SetupScreen(onDone: () -> Unit) {
+fun SetupScreen(onDone: () -> Unit, onBack: (() -> Unit)? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var snapshot by remember { mutableStateOf(readPermissions(context)) }
@@ -247,7 +247,7 @@ fun SetupScreen(onDone: () -> Unit) {
         if (ClickerRuntime.rootStatus.value == RootStatus.UNKNOWN) requestRoot()
     }
 
-    ZeroPageFrame(title = "开始使用") { padding ->
+    ZeroPageFrame(title = "权限与开始", onBack = onBack) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()

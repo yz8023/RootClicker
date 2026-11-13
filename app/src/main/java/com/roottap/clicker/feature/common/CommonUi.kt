@@ -86,13 +86,17 @@ fun PointDialog(
     onDismiss: () -> Unit,
     initialPress: Int = 0,
     initialDelay: Int = 0,
+    initialSwipeMs: Int = 300,
+    /** Swipe points set how long the finger takes instead of how long it presses. */
+    swipe: Boolean = false,
     showPress: Boolean = true,
-    onConfirm: (x: Int, y: Int, pressMs: Int, delayMs: Int) -> Unit,
+    onConfirm: (x: Int, y: Int, pressMs: Int, delayMs: Int, swipeMs: Int) -> Unit,
 ) {
     var x by remember { mutableStateOf(initialX.toString()) }
     var y by remember { mutableStateOf(initialY.toString()) }
     var press by remember { mutableStateOf(initialPress) }
     var delay by remember { mutableStateOf(initialDelay) }
+    var swipeMs by remember { mutableStateOf(initialSwipeMs) }
     val px = x.toIntOrNull()
     val py = y.toIntOrNull()
 
@@ -118,6 +122,17 @@ fun PointDialog(
                     modifier = Modifier.weight(1f),
                 )
             }
+            if (swipe) {
+                Spacer(Modifier.height(12.dp))
+                Text(text = "滑动用时 · ${formatMs(swipeMs)}")
+                Slider(
+                    value = swipeMs.toFloat(),
+                    onValueChange = { swipeMs = ((it.toInt() / 20) * 20).coerceAtLeast(20) },
+                    valueRange = 20f..5_000f,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(text = "从 A 滑到 B 用多久，手机上常见 0.2~0.5 秒")
+            }
             if (showPress) {
                 Spacer(Modifier.height(12.dp))
                 Text(text = if (press == 0) "按压时长 · 用默认" else "按压时长 · ${formatMs(press)}")
@@ -142,7 +157,7 @@ fun PointDialog(
                 confirmEnabled = px != null && py != null,
                 onConfirm = {
                     close {
-                        if (px != null && py != null) onConfirm(px, py, press, delay)
+                        if (px != null && py != null) onConfirm(px, py, press, delay, swipeMs)
                     }
                 },
                 onCancel = { close(onDismiss) },
